@@ -137,12 +137,14 @@ class TestCreateBill:
         bill = service.create_bill(_valid_bill())["bill"]
         assert bill["subtotal"] == round(rate * 2, 2)
 
-    def test_bill_with_discount(self, service):
+    def test_bill_with_ignored_discount(self, service):
         payload = _valid_bill()
         payload["items"][0]["discount_percent"] = 10
         result = service.create_bill(payload)
         assert result["success"] is True
-        assert result["bill"]["discount_total"] > 0
+        assert "discount_total" not in result["bill"]
+        subtotal = round(float(payload["items"][0]["rate"]) * 2, 2)
+        assert result["bill"]["grand_total"] == subtotal
 
     def test_bill_with_multiple_items(self, service):
         payload = _valid_bill()

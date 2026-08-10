@@ -5,6 +5,7 @@ Products and customers are still loaded from Supabase on startup.
 """
 
 import os
+import threading
 from datetime import datetime
 from typing import Optional
 
@@ -40,9 +41,17 @@ def _amount_in_words(amount: float) -> str:
 
     rupees = int(amount)
     paise  = round((amount - rupees) * 100)
-    result = (_words(rupees) + ' Rupees') if rupees else ''
+
+    # Handle rounding carry-over (e.g. 100.999 → paise == 100 → roll into rupees)
+    if paise == 100:
+        rupees += 1
+        paise = 0
+
+    rupee_word = 'Rupee' if rupees == 1 else 'Rupees'
+    result = (_words(rupees) + ' ' + rupee_word) if rupees else ''
     if paise:
-        result += (' and ' if result else '') + _words(paise) + ' Paise'
+        paise_word = 'Paisa' if paise == 1 else 'Paise'
+        result += (' and ' if result else '') + _words(paise) + ' ' + paise_word
     return (result + ' Only').strip() if result else 'Zero Rupees Only'
 
 
@@ -63,9 +72,38 @@ def _get_supabase():
     return create_client(url, key)
 
 
+# Cached module-level client. Creating a fresh client per request is expensive;
+# the service-role key is static, so a single shared client is safe and avoids
+# the N+1 client-creation overhead in get_all_bills / _row_to_bill_dict.
+_SUPABASE_CLIENT = None
+
+
+def _get_supabase_client():
+    """Return a cached, shared Supabase client (created once per process)."""
+    global _SUPABASE_CLIENT
+    if _SUPABASE_CLIENT is None:
+        _SUPABASE_CLIENT = _get_supabase()
+    return _SUPABASE_CLIENT
+
+
+def _safe_float(value, default: float = 0.0) -> float:
+    """Coerce a payload value to float without raising on None/bad types."""
+    try:
+        if value is None:
+            return default
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 class BillingService:
 
     def __init__(self) -> None:
+        self._lock: threading.Lock = threading.Lock()
         self._products: list[Product] = self._load_products_from_db()
         self._customers: list[Customer] = self._load_customers_from_db()
         self._hour_prefix: str = ""
@@ -84,7 +122,7 @@ class BillingService:
         now = datetime.now()
         prefix = now.strftime("%Y%b%d").upper() + Config.INVOICE_CONSTANT + now.strftime("%H")
         try:
-            sb = _get_supabase()
+            sb = _get_supabase_client()
             resp = sb.table("erp_billing_system").select("bill_no").execute()
             seqs = [
                 int(bn[len(prefix):])
@@ -99,15 +137,20 @@ class BillingService:
             self._hour_seq = 0
 
     def _next_bill_number(self) -> str:
-        now = datetime.now()
-        current_prefix = now.strftime("%Y%b%d").upper() + Config.INVOICE_CONSTANT + now.strftime("%H")
-        # Hour rolled over — re-seed from DB for the new hour
-        if current_prefix != self._hour_prefix:
-            self._hour_prefix = current_prefix
-            self._hour_seq = 0
-            self._seed_hour_counter()
-        self._hour_seq += 1
-        return self._hour_prefix + str(self._hour_seq)
+        # Lock guards the whole read-modify-write so two concurrent saves in the
+        # same hour cannot mint the same bill_no (previously a UNIQUE violation →
+        # one sale lost). The DB itself has no sequence for this format, so the
+        # in-process lock is the only protection against duplicates.
+        with self._lock:
+            now = datetime.now()
+            current_prefix = now.strftime("%Y%b%d").upper() + Config.INVOICE_CONSTANT + now.strftime("%H")
+            # Hour rolled over — re-seed from DB for the new hour
+            if current_prefix != self._hour_prefix:
+                self._hour_prefix = current_prefix
+                self._hour_seq = 0
+                self._seed_hour_counter()
+            self._hour_seq += 1
+            return self._hour_prefix + str(self._hour_seq)
 
 
     # ------------------------------------------------------------------
@@ -116,26 +159,33 @@ class BillingService:
 
     def _load_products_from_db(self) -> list[Product]:
         try:
-            sb = _get_supabase()
-            inv_resp = sb.table("inventory").select("product_id, available_stock").execute()
+            sb = _get_supabase_client()
+
+            # Expire any stale reservations before loading so stock is accurate
+            try:
+                sb.rpc("expire_stale_reservations", {}).execute()
+            except Exception:
+                pass  # Non-fatal
+
+            inv_resp = sb.table("inventory").select("product_id, current_stock").execute()
             stock_map: dict[str, float] = {
-                str(r["product_id"]): float(r.get("available_stock") or 0.0)
+                str(r.get("product_id")): _safe_float(r.get("current_stock"))
                 for r in inv_resp.data
             }
             resp = sb.table("products").select(
                 "product_id, product_name, selling_price, sku, product_image,"
                 "categories(name), units(unit_name), brands(brand_name)"
-            ).order("product_name").execute()
+            ).eq("gst_percentage", 0).order("product_name").execute()
 
             products: list[Product] = []
             for row in resp.data:
-                pid = str(row["product_id"])
+                pid = str(row.get("product_id") or "")
                 products.append(Product(
                     id=pid,
                     name=row.get("product_name") or "",
                     unit=((row.get("units") or {}).get("unit_name") or "Nos"),
-                    price=float(row.get("selling_price") or 0.0),
-                    mrp=float(row.get("selling_price") or 0.0),
+                    price=_safe_float(row.get("selling_price")),
+                    mrp=_safe_float(row.get("selling_price")),
                     stock=stock_map.get(pid, 0.0),
                     category=((row.get("categories") or {}).get("name") or "General"),
                     description=" | ".join(filter(None, [
@@ -162,7 +212,7 @@ class BillingService:
             name="Walk-in Customer", phone="", address="", email="", area="General",
         )
         try:
-            sb = _get_supabase()
+            sb = _get_supabase_client()
             resp = (
                 sb.table("customers")
                 .select("customer_id, name, phone, email, address")
@@ -175,7 +225,7 @@ class BillingService:
                 if not name:
                     continue
                 customers.append(Customer(
-                    id=str(row["customer_id"]),
+                    id=str(row.get("customer_id") or row.get("id")),
                     name=name,
                     phone=row.get("phone") or "",
                     address=row.get("address") or "",
@@ -244,7 +294,7 @@ class BillingService:
 
     def create_customer(self, name: str, phone: str = "", email: str = "", address: str = "") -> dict:
         try:
-            sb = _get_supabase()
+            sb = _get_supabase_client()
             resp = sb.table("customers").insert({
                 "name": name,
                 "phone": phone or None,
@@ -253,7 +303,7 @@ class BillingService:
             }).execute()
             row = resp.data[0]
             customer = Customer(
-                id=str(row["customer_id"]),
+                id=str(row.get("customer_id") or row.get("id")),
                 name=row.get("name") or name,
                 phone=row.get("phone") or "",
                 address=row.get("address") or "",
@@ -280,35 +330,41 @@ class BillingService:
         items = payload.get("items", [])
 
         grand_total = round(sum(
-            float(i.get("rate", 0)) * float(i.get("quantity", 0)) *
-            (1 - float(i.get("discount_percent", 0)) / 100)
+            _safe_float(i.get("rate", 0)) * _safe_float(i.get("quantity", 0))
             for i in items
         ), 2)
 
         bill_header = {
-            "business_name": "VELA AGENCY",
-            "bill_no":       bill_number,
-            "bill_date":     now.strftime("%Y-%m-%d"),
-            "bill_time":     now.strftime("%H:%M:%S"),
-            "payment_mode":  payload.get("payment_type", "Cash").upper(),
-            "total_items":   len(items),
-            "total_quantity": round(sum(float(i.get("quantity", 0)) for i in items), 2),
-            "grand_total":   grand_total,
+            "business_name":  "VELA AGENCY",
+            "bill_no":        bill_number,
+            "bill_date":      now.strftime("%Y-%m-%d"),
+            "bill_time":      now.strftime("%H:%M:%S"),
+            "payment_mode":   payload.get("payment_type", "Cash").upper(),
+            "total_items":    len(items),
+            "total_quantity": round(sum(_safe_float(i.get("quantity", 0)) for i in items), 2),
+            "grand_total":    grand_total,
+            # ── Salesman-input fields ──────────────────────────────
+            "customer_name":  payload.get("customer_name", "Walk-in Customer"),
+            "customer_phone": payload.get("customer_phone", "") or "",
+            "sales_type":     payload.get("sales_type", "Retail"),
+            "through":        payload.get("through", "") or "",
+            "area":           payload.get("area", "") or "",
+            "remarks":        payload.get("remarks", "") or "",
+            "draft_bill_id":  payload.get("draft_bill_id") or "",
         }
 
-        # Line rows for user bill (no unit column)
         def _user_line_rows(parent_id: str) -> list[dict]:
             return [
                 {
                     "bill_id":     parent_id,
                     "sno":         idx + 1,
                     "description": item.get("product_name", ""),
-                    "quantity":    float(item.get("quantity", 0)),
-                    "rate":        float(item.get("rate", 0)),
+                    "quantity":    _safe_float(item.get("quantity", 0)),
+                    "rate":        _safe_float(item.get("rate", 0)),
                     "amount":      round(
-                        float(item.get("rate", 0)) * float(item.get("quantity", 0)) *
-                        (1 - float(item.get("discount_percent", 0)) / 100), 2
+                        _safe_float(item.get("rate", 0)) * _safe_float(item.get("quantity", 0)), 2
                     ),
+                    "product_id":  item.get("product_id") or None,
                 }
                 for idx, item in enumerate(items)
             ]
@@ -321,18 +377,18 @@ class BillingService:
                     "sno":         idx + 1,
                     "description": item.get("product_name", ""),
                     "unit":        item.get("unit", "Nos"),
-                    "quantity":    float(item.get("quantity", 0)),
-                    "rate":        float(item.get("rate", 0)),
+                    "quantity":    _safe_float(item.get("quantity", 0)),
+                    "rate":        _safe_float(item.get("rate", 0)),
                     "amount":      round(
-                        float(item.get("rate", 0)) * float(item.get("quantity", 0)) *
-                        (1 - float(item.get("discount_percent", 0)) / 100), 2
+                        _safe_float(item.get("rate", 0)) * _safe_float(item.get("quantity", 0)), 2
                     ),
+                    "product_id":  item.get("product_id") or None,
                 }
                 for idx, item in enumerate(items)
             ]
 
         try:
-            sb = _get_supabase()
+            sb = _get_supabase_client()
 
             # ── 1. User Bill table ──────────────────────────────────────
             header_resp = sb.table("erp_billing_system").insert(bill_header).execute()
@@ -352,6 +408,12 @@ class BillingService:
                 "upi_id":          None,
                 "total_amount":    grand_total,
                 "amount_in_words": _amount_in_words(grand_total),
+                # ── Salesman-input fields ──────────────────────────────
+                "sales_type":      payload.get("sales_type", "Retail"),
+                "through":         payload.get("through", "") or "",
+                "area":            payload.get("area", "") or "",
+                "remarks":         payload.get("remarks", "") or "",
+                "draft_bill_id":   payload.get("draft_bill_id") or "",
             }
             try:
                 company_resp = sb.table("erp_billing_system_company").insert(company_header).execute()
@@ -362,9 +424,46 @@ class BillingService:
                 import traceback; traceback.print_exc()
                 print(f"[create_bill] WARNING: Company invoice DB insert failed: {company_exc}")
 
-            # ── 3. Deduct stock in memory ───────────────────────────────
-            for item in items:
-                self._deduct_stock(item.get("product_id"), float(item.get("quantity", 0)))
+            # ── 3. Complete reservations (stock already deducted at reserve time) ──
+            # complete_bill_reservations only decrements reserved_stock;
+            # current_stock was already reduced when the reservation was created.
+            # IMPORTANT: Do NOT call reserve_stock here — that would double-deduct.
+            draft_bill_id = payload.get("draft_bill_id")
+            if draft_bill_id:
+                try:
+                    from services.reservation_service import reservation_service as _rs
+                    from services.draft_service import draft_service as _ds
+                    rs_result = _rs.complete_bill_reservations(str(draft_bill_id))
+                    if rs_result.get("success"):
+                        print(f"[create_bill] Reservations completed for draft: {draft_bill_id}")
+                    else:
+                        print(f"[create_bill] WARNING: complete_bill_reservations: {rs_result.get('message')}")
+                    # Mark the bill_drafts row as COMPLETED
+                    _ds.complete_draft(str(draft_bill_id))
+                except Exception as rs_exc:
+                    print(f"[create_bill] WARNING: reservation/draft completion failed: {rs_exc}")
+            else:                # No draft_bill_id: bill was saved without going through the reservation
+                # flow (e.g. direct API call).  Deduct stock directly using a dedicated
+                # RPC so the operation is still atomic and row-locked.
+                # This path should be rare in normal POS usage.
+                from services.reservation_service import reservation_service as _rs
+                tmp_bill_id = f"DIRECT-{bill_number}"
+                for item in items:
+                    try:
+                        pid = item.get("product_id")
+                        qty = float(item.get("quantity", 0))
+                        if pid and qty > 0:
+                            r = _rs.reserve_stock(
+                                product_id=str(pid),
+                                bill_id=tmp_bill_id,
+                                quantity=qty,
+                                user_id=None,
+                            )
+                            if r.get("success"):
+                                # Immediately complete so reserved_stock is also cleared
+                                _rs.complete_bill_reservations(tmp_bill_id)
+                    except Exception:
+                        pass  # Non-fatal – stock sync best-effort
 
             # ── 4. Generate and upload company invoice PDF to bucket ────
             try:
@@ -399,7 +498,7 @@ class BillingService:
 
     def get_all_bills(self) -> list[dict]:
         try:
-            sb = _get_supabase()
+            sb = _get_supabase_client()
             rows = (
                 sb.table("erp_billing_system")
                 .select("*, erp_billing_system_items(*)")
@@ -413,7 +512,7 @@ class BillingService:
 
     def get_bill_by_number(self, bill_number: str) -> Optional[dict]:
         try:
-            sb = _get_supabase()
+            sb = _get_supabase_client()
             rows = (
                 sb.table("erp_billing_system")
                 .select("*, erp_billing_system_items(*)")
@@ -427,7 +526,7 @@ class BillingService:
 
     def delete_bill(self, bill_number: str) -> dict:
         try:
-            sb = _get_supabase()
+            sb = _get_supabase_client()
 
             # ── 1. User bill DB (items auto-cascade via FK ON DELETE CASCADE) ──
             user_rows = (
@@ -465,7 +564,16 @@ class BillingService:
                     # File may not exist in bucket — not a fatal error
                     print(f"[delete_bill] Storage bucket '{bucket}' skip ({bucket_exc})")
 
-            # ── 4. Re-sync hour counter so next bill continues from real max ──
+            # ── 4. Release reservations if bill is deleted ────────────────────
+            try:
+                from services.reservation_service import reservation_service as _rs
+                # Try by bill_id (UUID) first, then by bill_no
+                _rs.release_bill_reservations(user_rows[0]["bill_id"])
+                _rs.release_bill_reservations(bill_number)
+            except Exception as rs_exc:
+                print(f"[delete_bill] WARNING: reservation release failed: {rs_exc}")
+
+            # ── 5. Re-sync hour counter so next bill continues from real max ──
             self._seed_hour_counter()
 
             return {"success": True, "message": f"Bill {bill_number} deleted"}
@@ -488,7 +596,7 @@ class BillingService:
         company_units: dict[int, str] = {}
         customer_name_from_company = ""
         try:
-            sb = _get_supabase()
+            sb = _get_supabase_client()
             bill_no = row["bill_no"]
             comp_rows = (
                 sb.table("erp_billing_system_company")
@@ -505,33 +613,37 @@ class BillingService:
 
         bill_items = [
             {
-                "product_id":       None,
-                "product_name":     it["description"],
-                "unit":             company_units.get(it.get("sno", 0), "Nos"),
-                "quantity":         float(it["quantity"]),
-                "rate":             float(it["rate"]),
-                "discount_percent": 0.0,
-                "discount_amount":  0.0,
-                "total":            float(it["amount"]),
+                "product_id":   None,
+                "product_name": it["description"],
+                "unit":         company_units.get(it.get("sno", 0), "Nos"),
+                "quantity":     float(it["quantity"]),
+                "rate":         float(it["rate"]),
+                "total":        float(it["amount"]),
             }
             for it in items_raw
         ]
         grand_total = float(row["grand_total"])
+        # erp_billing_system carries the salesman fields (migration 0007);
+        # prefer them, falling back to the company table only for legacy rows.
+        customer_name = (
+            (row.get("customer_name") or "").strip()
+            or customer_name_from_company
+            or "Walk-in Customer"
+        )
         return {
             "bill_number":    row["bill_no"],
             "date":           f"{row['bill_date']}T{row.get('bill_time', '00:00:00')}",
             "customer_id":    0,
-            "customer_name":  customer_name_from_company or row.get("business_name", "Walk-in Customer"),
-            "customer_phone": "",
+            "customer_name":  customer_name,
+            "customer_phone": (row.get("customer_phone") or "").strip(),
             "payment_type":   row.get("payment_mode", "Cash"),
-            "sales_type":     "Retail",
-            "through":        "",
-            "area":           "",
+            "sales_type":     row.get("sales_type", "Retail"),
+            "through":        (row.get("through") or "").strip(),
+            "area":           (row.get("area") or "").strip(),
             "price_list":     "Retail",
-            "remarks":        "",
+            "remarks":        (row.get("remarks") or "").strip(),
             "items":          bill_items,
             "subtotal":       grand_total,
-            "discount_total": 0.0,
             "grand_total":    grand_total,
             "gst_total":      0.0,
             "round_off":      0.0,
@@ -546,7 +658,7 @@ class BillingService:
 
     def get_dashboard_summary(self) -> dict:
         try:
-            sb = _get_supabase()
+            sb = _get_supabase_client()
             resp = sb.table("erp_billing_system").select("grand_total").execute()
             total_sales = sum(float(r["grand_total"]) for r in resp.data)
             total_bills = len(resp.data)
@@ -574,7 +686,7 @@ class BillingService:
         pdf_bytes = _generate_company_invoice_pdf(bill_number)
         file_name = f"{bill_number}.pdf"
         
-        sb = _get_supabase()
+        sb = _get_supabase_client()
         sb.storage.from_("erp_billing_system_company").upload(
             path=file_name,
             file=pdf_bytes,
@@ -588,18 +700,23 @@ class BillingService:
 
     def _validate_bill_payload(self, payload: dict) -> list[str]:
         errors: list[str] = []
+        if not isinstance(payload, dict):
+            return ["Invalid bill payload"]
         if not payload.get("customer_name"):
             errors.append("customer_name is required")
         items = payload.get("items", [])
-        if not items:
+        if not isinstance(items, list) or not items:
             errors.append("Bill must contain at least one item")
             return errors
         for idx, item in enumerate(items, start=1):
+            if not isinstance(item, dict):
+                errors.append(f"Item {idx}: must be an object")
+                continue
             if not item.get("product_id"):
                 errors.append(f"Item {idx}: product_id is required")
-            if float(item.get("quantity", 0)) <= 0:
+            if _safe_float(item.get("quantity", 0)) <= 0:
                 errors.append(f"Item {idx}: quantity must be greater than 0")
-            if float(item.get("rate", 0)) <= 0:
+            if _safe_float(item.get("rate", 0)) <= 0:
                 errors.append(f"Item {idx}: rate must be greater than 0")
         return errors
 

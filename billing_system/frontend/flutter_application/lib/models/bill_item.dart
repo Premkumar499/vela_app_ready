@@ -1,13 +1,12 @@
 import 'product.dart';
 
-/// A single line in a bill — no GST, total = price × qty − discount.
+/// A single line in a bill — no GST, total = price × qty.
 class BillItem {
   final String productId;
   final String productName;
   final String unit;
   double       quantity;
-  final double rate;           // sale price per unit
-  double       discountPercent;
+  final double rate;
   final double maxStock;       // available stock — 0 means unlimited fallback
 
   BillItem({
@@ -16,14 +15,12 @@ class BillItem {
     required this.unit,
     required this.quantity,
     required this.rate,
-    this.discountPercent = 0,
     this.maxStock = 0,
   });
 
   // ── Computed ─────────────────────────────────────────────────────────────
-  double get grossAmount    => _r(rate * quantity);
-  double get discountAmount => _r(grossAmount * discountPercent / 100);
-  double get total          => _r(grossAmount - discountAmount);
+  double get grossAmount   => _r(rate * quantity);
+  double get total         => grossAmount;
 
   // GST not applicable — kept for UI compatibility
   double get rateWithGst   => rate;
@@ -44,30 +41,27 @@ class BillItem {
       );
 
   factory BillItem.fromJson(Map<String, dynamic> json) => BillItem(
-        productId:       json['product_id'].toString(),
-        productName:     json['product_name'] as String,
-        unit:            json['unit'] as String? ?? 'PCS',
-        quantity:        (json['quantity'] as num).toDouble(),
-        rate:            (json['rate'] as num).toDouble(),
-        discountPercent: (json['discount_percent'] as num?)?.toDouble() ?? 0,
+        productId:   json['product_id'].toString(),
+        productName: json['product_name'] as String,
+        unit:        json['unit'] as String? ?? 'PCS',
+        quantity:    (json['quantity'] as num).toDouble(),
+        rate:        (json['rate'] as num).toDouble(),
       );
 
   Map<String, dynamic> toJson() => {
-        'product_id':       productId,
-        'product_name':     productName,
-        'unit':             unit,
-        'quantity':         quantity,
-        'rate':             rate,
-        'discount_percent': discountPercent,
+        'product_id':   productId,
+        'product_name': productName,
+        'unit':         unit,
+        'quantity':     quantity,
+        'rate':         rate,
       };
 
-  BillItem copyWith({double? quantity, double? discountPercent}) => BillItem(
-        productId:       productId,
-        productName:     productName,
-        unit:            unit,
-        quantity:        quantity        ?? this.quantity,
-        rate:            rate,
-        discountPercent: discountPercent ?? this.discountPercent,
-        maxStock:        maxStock,
+  BillItem copyWith({double? quantity}) => BillItem(
+        productId:   productId,
+        productName: productName,
+        unit:        unit,
+        quantity:    quantity ?? this.quantity,
+        rate:        rate,
+        maxStock:    maxStock,
       );
 }

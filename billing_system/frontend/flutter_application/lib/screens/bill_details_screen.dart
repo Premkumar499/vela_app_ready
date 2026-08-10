@@ -83,7 +83,6 @@ class _BillDetailsScreenState extends State<BillDetailsScreen> {
                     'qty': item.quantity % 1 == 0 ? item.quantity.toInt() : item.quantity,
                     'unit': item.unit,
                     'rate': item.rate.toStringAsFixed(2),
-                    'discount': item.discountPercent > 0 ? item.discountPercent.toStringAsFixed(0) : 0,
                     'amount': item.total.toStringAsFixed(2),
                   }).toList(),
                   'summary': {
@@ -193,7 +192,6 @@ class _BillDetailsScreenState extends State<BillDetailsScreen> {
                   DataColumn(label: Text('Unit', style: AppTheme.tableHeaderStyle)),
                   DataColumn(label: Text('Qty', style: AppTheme.tableHeaderStyle)),
                   DataColumn(label: Text('Rate', style: AppTheme.tableHeaderStyle)),
-                  DataColumn(label: Text('Disc%', style: AppTheme.tableHeaderStyle)),
                   DataColumn(label: Text('GST%', style: AppTheme.tableHeaderStyle)),
                   DataColumn(label: Text('GST Amt', style: AppTheme.tableHeaderStyle)),
                   DataColumn(label: Text('Total', style: AppTheme.tableHeaderStyle)),
@@ -212,7 +210,6 @@ class _BillDetailsScreenState extends State<BillDetailsScreen> {
                     DataCell(Text(item.unit)),
                     DataCell(Text(item.quantity.toStringAsFixed(2))),
                     DataCell(Text(currency.format(item.rate))),
-                    DataCell(Text('${item.discountPercent}%')),
                     DataCell(Text('${item.gstPercent.toInt()}%')),
                     DataCell(Text(currency.format(item.gstAmount))),
                     DataCell(Text(
@@ -238,9 +235,6 @@ class _BillDetailsScreenState extends State<BillDetailsScreen> {
                   child: Column(
                     children: [
                       _TotalRow('Subtotal', currency.format(bill.subtotal)),
-                      _TotalRow('Total Discount',
-                          '- ${currency.format(bill.discountTotal)}',
-                          color: AppTheme.error),
                       _TotalRow('Total GST', currency.format(bill.gstTotal),
                           color: AppTheme.success),
                       _TotalRow('Round Off',

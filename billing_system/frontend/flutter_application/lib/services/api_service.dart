@@ -39,6 +39,37 @@ class ApiService {
       };
 
   // -------------------------------------------------------------------------
+  // Auth
+  // -------------------------------------------------------------------------
+
+  /// Login with mobile_number as password. Returns user data on success.
+  static Future<ApiResult<Map<String, dynamic>>> login(String mobileNumber) async {
+    try {
+      final response = await _client
+          .post(
+            Uri.parse('${AppConstants.baseUrl}/auth/login'),
+            headers: _headers,
+            body: jsonEncode({'mobile_number': mobileNumber}),
+          )
+          .timeout(AppConstants.requestTimeout);
+
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        return ApiResult.ok(body['data'] as Map<String, dynamic>);
+      }
+      // 401 = wrong credentials
+      try {
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        return ApiResult.err(body['message'] as String? ?? 'Invalid credentials');
+      } catch (_) {
+        return ApiResult.err('Invalid credentials');
+      }
+    } catch (_) {
+      return const ApiResult.err('Cannot reach server. Check backend is running.');
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // Health
   // -------------------------------------------------------------------------
 
@@ -158,18 +189,20 @@ class ApiService {
     String through = '',
     String area = '',
     String priceList = 'Retail',
+    String? draftBillId,
   }) async {
     try {
       final body = jsonEncode({
-        'customer_id': customer.id,
-        'customer_name': customer.name,
+        'customer_id':    customer.id,
+        'customer_name':  customer.name,
         'customer_phone': customerPhone,
-        'payment_type': paymentType,
-        'sales_type': salesType,
-        'remarks': remarks,
-        'through': through,
-        'area': area,
-        'price_list': priceList,
+        'payment_type':   paymentType,
+        'sales_type':     salesType,
+        'remarks':        remarks,
+        'through':        through,
+        'area':           area,
+        'price_list':     priceList,
+        if (draftBillId != null) 'draft_bill_id': draftBillId,
         'items': items.map((e) => e.toJson()).toList(),
       });
 
@@ -206,6 +239,53 @@ class ApiService {
     } catch (_) {
       // No local bill history — return empty list gracefully
       return ApiResult.ok(<Bill>[], isOffline: true);
+    }
+  }
+
+  /// Fetch all PENDING salesperson_bills submissions.
+  static Future<ApiResult<List<Map<String, dynamic>>>> getSalespersonBills() async {
+    try {
+      final response = await _client
+          .get(
+            Uri.parse('${AppConstants.baseUrl}/salesperson-bills/'),
+            headers: _headers,
+          )
+          .timeout(AppConstants.requestTimeout);
+
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        final data = (body['data'] as List<dynamic>? ?? [])
+            .map((e) => e as Map<String, dynamic>)
+            .toList();
+        return ApiResult.ok(data);
+      }
+      return ApiResult.err(_extractError(response));
+    } catch (_) {
+      return ApiResult.err(
+          'Cannot reach server to load salesperson bills.');
+    }
+  }
+
+  /// Push one salesperson_bills row through create_bill.
+  /// Generates the user bill + company bill + PDFs, then deletes the row.
+  static Future<ApiResult<String>> pushSalespersonBill(String rowId) async {
+    try {
+      final response = await _client
+          .post(
+            Uri.parse('${AppConstants.baseUrl}/salesperson-bills/$rowId/push'),
+            headers: _headers,
+          )
+          .timeout(AppConstants.requestTimeout);
+
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        final billNo = body['bill_number']?.toString() ?? '';
+        return ApiResult.ok(billNo);
+      }
+      return ApiResult.err(_extractError(response));
+    } catch (_) {
+      return ApiResult.err(
+          'Cannot push bill: server is unreachable.');
     }
   }
 
@@ -280,6 +360,190 @@ class ApiService {
       return ApiResult.err(_extractError(response));
     } catch (_) {
       return const ApiResult.err('Cannot reach server to create customer.');
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Draft Bills (bill_drafts table — shared with GST ERP)
+  // -------------------------------------------------------------------------
+
+  /// Create a new ACTIVE row in bill_drafts when a billing session starts.
+  /// This anchors all stock reservations to a real DB row instead of a
+  /// floating client-generated ID.
+  static Future<ApiResult<Map<String, dynamic>>> createDraft({
+    required String draftId,
+    String? userId,
+  }) async {
+    try {
+      final response = await _client
+          .post(
+            Uri.parse('${AppConstants.baseUrl}/drafts/create'),
+            headers: _headers,
+            body: jsonEncode({
+              'draft_id': draftId,
+              if (userId != null) 'user_id': userId,
+            }),
+          )
+          .timeout(AppConstants.requestTimeout);
+
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode == 200 && body['success'] == true) {
+        return ApiResult.ok(body);
+      }
+      // If the draft already exists (network retry), treat as success
+      if (body['message']?.toString().contains('already exists') == true) {
+        return ApiResult.ok(body);
+      }
+      return ApiResult.err(body['message'] as String? ?? 'Could not create draft');
+    } catch (_) {
+      // Non-fatal — the draft ID is still valid, reservations will link to it
+      return const ApiResult.err('Cannot reach server to create draft.');
+    }
+  }
+
+  /// Mark draft CANCELLED in bill_drafts (bill abandoned).
+  static Future<void> cancelDraft(String draftId) async {
+    try {
+      await _client
+          .post(
+            Uri.parse('${AppConstants.baseUrl}/drafts/cancel'),
+            headers: _headers,
+            body: jsonEncode({'draft_id': draftId}),
+          )
+          .timeout(AppConstants.requestTimeout);
+    } catch (_) {}
+  }
+
+  // -------------------------------------------------------------------------
+  // Stock Reservations
+  // -------------------------------------------------------------------------
+
+  /// Reserve [quantity] units of [productId] for a draft bill [draftBillId].
+  /// Returns the full JSON response from the backend (success, reservation_id,
+  /// remaining_available, error_code, message).
+  static Future<ApiResult<Map<String, dynamic>>> reserveStock({
+    required String productId,
+    required String draftBillId,
+    required double quantity,
+    String? userId,
+  }) async {
+    try {
+      final response = await _client
+          .post(
+            Uri.parse('${AppConstants.baseUrl}/reservations/reserve'),
+            headers: _headers,
+            body: jsonEncode({
+              'product_id': productId,
+              'bill_id':    draftBillId,
+              'quantity':   quantity,
+              if (userId != null) 'user_id': userId,
+            }),
+          )
+          .timeout(AppConstants.requestTimeout);
+
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode == 200 && body['success'] == true) {
+        return ApiResult.ok(body);
+      }
+      return ApiResult.err(body['message'] as String? ?? 'Reservation failed');
+    } catch (_) {
+      return const ApiResult.err('Cannot reach server to reserve stock.');
+    }
+  }
+
+  /// Release all ACTIVE reservations for [draftBillId] (bill cancelled).
+  static Future<ApiResult<Map<String, dynamic>>> releaseBillReservations(
+      String draftBillId) async {
+    try {
+      final response = await _client
+          .post(
+            Uri.parse('${AppConstants.baseUrl}/reservations/release-bill'),
+            headers: _headers,
+            body: jsonEncode({'bill_id': draftBillId}),
+          )
+          .timeout(AppConstants.requestTimeout);
+
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      return ApiResult.ok(body);
+    } catch (_) {
+      return const ApiResult.err('Cannot reach server to release reservations.');
+    }
+  }
+
+  /// Complete all ACTIVE reservations for [draftBillId] (bill saved).
+  static Future<ApiResult<Map<String, dynamic>>> completeBillReservations(
+      String draftBillId) async {
+    try {
+      final response = await _client
+          .post(
+            Uri.parse('${AppConstants.baseUrl}/reservations/complete-bill'),
+            headers: _headers,
+            body: jsonEncode({'bill_id': draftBillId}),
+          )
+          .timeout(AppConstants.requestTimeout);
+
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      return ApiResult.ok(body);
+    } catch (_) {
+      return const ApiResult.err('Cannot reach server to complete reservations.');
+    }
+  }
+
+  /// Expire stale reservations (fire-and-forget housekeeping).
+  /// Call this on product list load so stock freed by abandoned drafts
+  /// becomes available again without waiting for a cron job.
+  static Future<void> expireStaleReservations() async {
+    try {
+      await _client
+          .post(
+            Uri.parse('${AppConstants.baseUrl}/reservations/expire-stale'),
+            headers: _headers,
+            body: '{}',
+          )
+          .timeout(AppConstants.requestTimeout);
+    } catch (_) {}
+  }
+
+  /// Release a single reservation by [reservationId].
+  static Future<void> releaseReservation(String reservationId) async {
+    try {
+      await _client
+          .post(
+            Uri.parse('${AppConstants.baseUrl}/reservations/release'),
+            headers: _headers,
+            body: jsonEncode({'reservation_id': reservationId}),
+          )
+          .timeout(AppConstants.requestTimeout);
+    } catch (_) {}
+  }
+
+  /// Atomically update an existing ACTIVE reservation to [newQuantity].
+  /// Safer than release + re-reserve: no race window between the two ops.
+  /// Returns the full JSON response (success, old_quantity, new_quantity,
+  /// remaining_available, error_code, message).
+  static Future<ApiResult<Map<String, dynamic>>> updateReservation({
+    required String reservationId,
+    required double newQuantity,
+  }) async {
+    try {
+      final response = await _client
+          .post(
+            Uri.parse('${AppConstants.baseUrl}/reservations/update'),
+            headers: _headers,
+            body: jsonEncode({
+              'reservation_id': reservationId,
+              'new_quantity':   newQuantity,
+            }),
+          )
+          .timeout(AppConstants.requestTimeout);
+
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode == 200 && body['success'] == true) {
+        return ApiResult.ok(body);
+      }
+      return ApiResult.err(body['message'] as String? ?? 'Update reservation failed');
+    } catch (_) {
+      return const ApiResult.err('Cannot reach server to update reservation.');
     }
   }
 

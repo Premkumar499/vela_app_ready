@@ -10,26 +10,24 @@ class BillingTable extends StatelessWidget {
   final List<BillItem> items;
   final Function(int index) onDelete;
   final Function(int index, double quantity) onQuantityChanged;
-  final Function(int index, double discount) onDiscountChanged;
 
   const BillingTable({
     super.key,
     required this.items,
     required this.onDelete,
     required this.onQuantityChanged,
-    required this.onDiscountChanged,
   });
 
   static const _headers = [
     'S.No', 'Item Name', 'Unit', 'Qty',
-    'Rate+GST', 'Rate', 'Disc%', 'Disc Amt',
+    'Rate+GST', 'Rate',
     'Amount', 'GST', 'Total', 'Action',
   ];
 
   // flex widths for each column
   static const _flex = [
     1, 4, 1, 2,
-    2, 2, 1, 2,
+    2, 2,
     2, 2, 2, 1,
   ];
 
@@ -118,8 +116,6 @@ class BillingTable extends StatelessWidget {
                 ),
                 _cell(Text(currency.format(item.rateWithGst), style: AppTheme.tableCell, textAlign: TextAlign.right)),
                 _cell(Text(currency.format(item.rate), style: AppTheme.tableCell, textAlign: TextAlign.right)),
-                _cell(Text('${item.discountPercent}%', style: AppTheme.tableCell, textAlign: TextAlign.center)),
-                _cell(Text(currency.format(item.discountAmount), style: AppTheme.tableCell, textAlign: TextAlign.right)),
                 _cell(Text(currency.format(item.taxableAmount), style: AppTheme.tableCell, textAlign: TextAlign.right)),
                 _cell(Text(
                   '${currency.format(item.gstAmount)}\n(${item.gstPercent.toInt()}%)',

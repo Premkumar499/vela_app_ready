@@ -33,6 +33,7 @@ class AppConstants {
   static const String routeProducts = '/products';
   static const String routeCustomers = '/customers';
   static const String routeHistory = '/history';
+  static const String routeOrders = '/orders';
   static const String routeBillDetails = '/bill-details';
   static const String routeSettings = '/settings';
 

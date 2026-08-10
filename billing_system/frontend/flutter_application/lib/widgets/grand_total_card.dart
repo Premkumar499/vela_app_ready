@@ -59,7 +59,6 @@ class GrandTotalCard extends StatelessWidget {
             children: [
               _SummaryItem('Subtotal', currency.format(provider.subtotal)),
               _SummaryItem('GST', currency.format(provider.gstTotal)),
-              _SummaryItem('Discount', currency.format(provider.discountTotal)),
               _SummaryItem(
                 'Round Off',
                 currency.format(provider.roundOff.abs()),

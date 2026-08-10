@@ -10,6 +10,7 @@ import 'screens/pos_billing_screen.dart';
 import 'screens/company_invoice_screen.dart';
 import 'screens/customers_screen.dart';
 import 'screens/dashboard_screen.dart';
+import 'screens/orders_screen.dart';
 import 'screens/products_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/login_screen.dart';
@@ -68,6 +69,7 @@ class BillingApp extends StatelessWidget {
           AppConstants.routeProducts: (_) => const ProductsScreen(),
           AppConstants.routeCustomers: (_) => const CustomersScreen(),
           AppConstants.routeHistory: (_) => const BillHistoryScreen(),
+          AppConstants.routeOrders: (_) => const OrdersScreen(),
           AppConstants.routeSettings: (_) => const SettingsScreen(),
           '/consolidated-invoice': (_) => const ConsolidatedInvoiceScreen(),
         },

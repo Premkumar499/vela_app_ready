@@ -52,59 +52,63 @@ class InvoicePreview extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Company logo image - full size
-                Image.asset(
-                  'assets/images/company_logo.jpg',
-                  width: 80,
-                  height: 80,
-                  fit: BoxFit.contain,
-                  errorBuilder: (context, error, stackTrace) {
-                    // Fallback to icon if image fails to load
-                    return Container(
-                      width: 40,
-                      height: 40,
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: _navy,
-                      ),
-                      child: const Icon(Icons.storefront,
-                          color: Colors.white, size: 20),
-                    );
-                  },
-                ),
-                const SizedBox(width: 10),
-                const Text(
-                  Invoice.companyName,
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: _navy,
-                    letterSpacing: 0.5,
+        Flexible(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Company logo image - full size
+                  Image.asset(
+                    'assets/images/company_logo.jpg',
+                    width: 80,
+                    height: 80,
+                    fit: BoxFit.contain,
+                    errorBuilder: (context, error, stackTrace) {
+                      // Fallback to icon if image fails to load
+                      return Container(
+                        width: 40,
+                        height: 40,
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: _navy,
+                        ),
+                        child: const Icon(Icons.storefront,
+                            color: Colors.white, size: 20),
+                      );
+                    },
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            SizedBox(
-              width: 300,
-              child: Text(
-                Invoice.companyAddress,
-                style: TextStyle(fontSize: 11.5, color: Colors.grey.shade800),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      Invoice.companyName,
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: _navy,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ),
-            const SizedBox(height: 6),
-            _kv('GSTIN', Invoice.companyGstin),
-            _kv('FSSAI', Invoice.companyFssai),
-            _kv('PAN', Invoice.companyPan),
-            _kv('Phone', Invoice.companyPhone),
-            _kv('Email', Invoice.companyEmail),
-          ],
+              const SizedBox(height: 8),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 260),
+                child: Text(
+                  Invoice.companyAddress,
+                  style: TextStyle(fontSize: 11.5, color: Colors.grey.shade800),
+                ),
+              ),
+              const SizedBox(height: 6),
+              _kv('GSTIN', Invoice.companyGstin),
+              _kv('FSSAI', Invoice.companyFssai),
+              _kv('PAN', Invoice.companyPan),
+              _kv('Phone', Invoice.companyPhone),
+              _kv('Email', Invoice.companyEmail),
+            ],
+          ),
         ),
         const Spacer(),
         Container(

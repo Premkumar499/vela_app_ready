@@ -102,7 +102,9 @@ class _CustomersScreenState extends State<CustomersScreen> {
                   backgroundColor: AppTheme.primary,
                   radius: 28,
                   child: Text(
-                    customer.name[0].toUpperCase(),
+                    customer.name.isNotEmpty
+                        ? customer.name[0].toUpperCase()
+                        : '?',
                     style: const TextStyle(
                       fontSize: 24,
                       fontWeight: FontWeight.w700,

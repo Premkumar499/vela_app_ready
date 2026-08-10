@@ -16,7 +16,6 @@ class Bill {
   final List<BillItem> items;
   final double subtotal;
   final double gstTotal;
-  final double discountTotal;
   final double roundOff;
   final double grandTotal;
   final Map<String, double> gstBreakup;
@@ -37,7 +36,6 @@ class Bill {
     required this.items,
     required this.subtotal,
     required this.gstTotal,
-    required this.discountTotal,
     required this.roundOff,
     required this.grandTotal,
     required this.gstBreakup,
@@ -67,7 +65,6 @@ class Bill {
           .toList(),
       subtotal:      (json['subtotal']      as num?)?.toDouble() ?? 0.0,
       gstTotal:      (json['gst_total']     as num?)?.toDouble() ?? 0.0,
-      discountTotal: (json['discount_total'] as num?)?.toDouble() ?? 0.0,
       roundOff:      (json['round_off']     as num?)?.toDouble() ?? 0.0,
       grandTotal:    (json['grand_total']   as num).toDouble(),
       gstBreakup:    gstBreakup,
@@ -91,7 +88,6 @@ class Bill {
         'items': items.map((e) => e.toJson()).toList(),
         'subtotal': subtotal,
         'gst_total': gstTotal,
-        'discount_total': discountTotal,
         'round_off': roundOff,
         'grand_total': grandTotal,
         'gst_breakup': gstBreakup,

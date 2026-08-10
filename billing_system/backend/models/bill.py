@@ -84,10 +84,6 @@ class Bill:
         return round(sum(item.gross_amount for item in self.items), 2)
 
     @property
-    def discount_total(self) -> float:
-        return round(sum(item.discount_amount for item in self.items), 2)
-
-    @property
     def grand_total(self) -> float:
         return round(sum(item.total for item in self.items), 2)
 
@@ -110,7 +106,6 @@ class Bill:
             "remarks": self.remarks,
             "items": [item.to_dict() for item in self.items],
             "subtotal": self.subtotal,
-            "discount_total": self.discount_total,
             "grand_total": self.grand_total,
             "item_count": len(self.items),
         }

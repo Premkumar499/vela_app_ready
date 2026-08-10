@@ -58,6 +58,8 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
   // ─── Data loading ──────────────────────────────────────────────────────────
   Future<void> _loadProducts() async {
     setState(() => _loadingProds = true);
+    // Housekeeping: expire stale reservations so abandoned draft stock is freed
+    ApiService.expireStaleReservations();
     final result = await ApiService.getProducts();
     if (!mounted) return;
     if (result.success && result.data != null) {
@@ -109,6 +111,7 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
       through:     prov.through,
       area:        prov.area,
       priceList:   prov.priceList,
+      draftBillId: prov.draftBillId,
     );
     if (!mounted) return;
     setState(() => _isSaving = false);
@@ -116,18 +119,6 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
     if (result.success) {
       final billNum = result.data?['bill_number'] as String? ?? 'SAVED';
       setState(() => _invoiceNum = billNum);
-
-      // IMMEDIATELY generate company invoice PDF after bill is saved
-      print('[PosBillingScreen] Bill saved: $billNum, generating company invoice...');
-      try {
-        final companyResult = await InvoiceExportService.generateCompanyInvoice(billNum);
-        print('[PosBillingScreen] Company invoice result: ${companyResult['success']}, message: ${companyResult['message']}');
-        if (companyResult['success'] != true) {
-          print('[PosBillingScreen] WARNING: Company invoice generation failed');
-        }
-      } catch (e) {
-        print('[PosBillingScreen] ERROR generating company invoice: $e');
-      }
 
       // Build receipt JSON from current bill state
       final now = DateTime.now();
@@ -155,9 +146,6 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
                             : item.quantity,
           'unit':         item.unit,
           'rate':         item.rate.toStringAsFixed(2),
-          'discount':     item.discountPercent > 0
-                            ? item.discountPercent.toStringAsFixed(0)
-                            : 0,
           'amount':       item.total.toStringAsFixed(2),
         }).toList(),
         'summary': {
@@ -218,7 +206,7 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
         message: 'Clear all items and cancel this bill?',
         danger:  true,
         onConfirm: () {
-          prov.resetBill();
+          prov.cancelBillWithRelease();
           setState(() => _invoiceNum = 'DRAFT');
         },
       ),
@@ -234,7 +222,7 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
         title:   'New Bill',
         message: 'Discard current bill and start a new one?',
         onConfirm: () {
-          prov.resetBill();
+          prov.cancelBillWithRelease();
           setState(() => _invoiceNum = 'DRAFT');
         },
       ),
@@ -312,18 +300,19 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
               searchCtrl:   _searchCtrl,
               searchFocus:  _searchFocus,
               onCategory:   _selectCategory,
-              onProduct:    (p) {
-                final added = provider.addProduct(p);
-                if (!added) {
+              onProduct:    (p) async {
+                final result = await provider.addProductWithReservation(p);
+                if (!mounted) return;
+                if (!result.success) {
+                  final available = result.remainingAvailable;
+                  final msg = available > 0
+                      ? 'Only ${available.toStringAsFixed(available.truncateToDouble() == available ? 0 : 1)} units are currently available'
+                      : '${p.name} is out of stock';
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text(
-                        p.stock <= 0
-                          ? '${p.name} is out of stock'
-                          : '${p.name} — maximum stock (${p.stock.toInt()}) reached',
-                      ),
+                      content: Text(msg),
                       backgroundColor: PosTheme.danger,
-                      duration: const Duration(seconds: 2),
+                      duration: const Duration(seconds: 3),
                     ),
                   );
                 }
@@ -602,33 +591,55 @@ class _RightPanel extends StatelessWidget {
                 : ListView.builder(
                     padding: EdgeInsets.zero,
                     itemCount: provider.items.length,
-                    itemBuilder: (_, i) {
+                    itemBuilder: (ctx, i) {
                       final item = provider.items[i];
+                      // We need the Product to call reservation-aware methods.
+                      // Build a lightweight proxy Product from the BillItem.
+                      final proxyProduct = Product(
+                        id:       item.productId,
+                        name:     item.productName,
+                        unit:     item.unit,
+                        price:    item.rate,
+                        mrp:      item.rate,
+                        stock:    item.maxStock,
+                        category: '',
+                      );
                       return PosBillItemRow(
-                        index:      i,
-                        item:       item,
-                        onIncrease: () {
-                          final max = item.maxStock;
-                          if (max > 0 && item.quantity >= max) return;
-                          provider.updateQuantity(i, item.quantity + 1);
-                        },
-                        onDecrease: () {
-                          if (item.quantity > 1) {
-                            provider.updateQuantity(i, item.quantity - 1);
-                          } else {
-                            provider.removeItem(i);
+                        index: i,
+                        item:  item,
+                        onIncrease: () async {
+                          final result =
+                              await provider.addProductWithReservation(
+                                  proxyProduct, quantity: 1);
+                          if (!result.success && ctx.mounted) {
+                            final avail = result.remainingAvailable;
+                            final msg = avail > 0
+                                ? 'Only ${avail.toStringAsFixed(0)} units available'
+                                : '${item.productName} is out of stock';
+                            ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                              content: Text(msg),
+                              backgroundColor: PosTheme.danger,
+                              duration: const Duration(seconds: 3),
+                            ));
                           }
                         },
-                        onDelete:   () => provider.removeItem(i),
+                        onDecrease: () async {
+                          if (item.quantity > 1) {
+                            await provider.updateQuantityWithReservation(
+                                i, item.quantity - 1, proxyProduct);
+                          } else {
+                            await provider.removeItemWithRelease(i);
+                          }
+                        },
+                        onDelete: () => provider.removeItemWithRelease(i),
                       );
                     },
                   ),
           ),
           // ── Summary ────────────────────────────────────────────────
           PosSummarySection(
-            subtotal:      provider.subtotal,
-            discountTotal: provider.discountTotal,
-            grandTotal:    provider.grandTotal,
+            subtotal:   provider.subtotal,
+            grandTotal: provider.grandTotal,
           ),
           // ── Payment selector ───────────────────────────────────────
           Padding(
@@ -857,6 +868,18 @@ class _CustomerDetailsInputState extends State<_CustomerDetailsInput> {
     final c = widget.provider.customer;
     if (c.name != 'Walk-in Customer') _nameCtrl.text = c.name;
     _phoneCtrl.text = widget.provider.customerPhone;
+  }
+
+  @override
+  void didUpdateWidget(_CustomerDetailsInput oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final c = widget.provider.customer;
+    if (_nameCtrl.text != c.name) {
+      _nameCtrl.text = c.name == 'Walk-in Customer' ? '' : c.name;
+    }
+    if (_phoneCtrl.text != widget.provider.customerPhone) {
+      _phoneCtrl.text = widget.provider.customerPhone;
+    }
   }
 
   @override

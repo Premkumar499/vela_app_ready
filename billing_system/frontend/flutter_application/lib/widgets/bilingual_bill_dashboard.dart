@@ -150,17 +150,18 @@ class _BilingualBillDashboardState extends State<BilingualBillDashboard> {
     }
   }
 
-  Future<void> _saveReceipt() async {    setState(() => _isSaving = true);
+  Future<void> _saveReceipt() async {
+    setState(() => _isSaving = true);
     final result = await InvoiceExportService.saveInvoiceAsImage(
       widgetKey: _receiptKey,
       invoiceNumber: _billNo,
       isCompanyInvoice: false,
     );
-    setState(() => _isSaving = false);
     if (!mounted) return;
+    setState(() => _isSaving = false);
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(result['success'] == true
-          ? 'Saved: ${result['folder']}/${result['fileName']}'
+          ? 'Saved: ${result['bucket'] ?? ''}/${result['fileName'] ?? ''}'
           : result['message']?.toString() ?? 'Failed to save'),
       backgroundColor: result['success'] == true ? Colors.green : Colors.red,
       duration: const Duration(seconds: 4),

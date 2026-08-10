@@ -32,10 +32,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
     setState(() {
       if (result.success) {
         final bills = result.data ?? [];
+        final today = DateUtils.dateOnly(DateTime.now());
+        final todayBills = bills.where((b) {
+          final d = DateTime.tryParse(b.date);
+          return d != null && DateUtils.isSameDay(d, today);
+        }).toList();
         final totalSales = bills.fold<double>(0, (s, b) => s + b.grandTotal);
+        final todaySales =
+            todayBills.fold<double>(0, (s, b) => s + b.grandTotal);
         _summary = {
-          'total_bills': bills.length,
-          'total_sales': totalSales,
+          'total_bills': todayBills.length,
+          'total_sales': todaySales,
+          'all_bills': bills.length,
+          'all_sales': totalSales,
         };
       }
       _loadingSummary = false;
@@ -102,6 +111,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     color: Colors.deepPurple,
                     onTap: () => Navigator.pushNamed(
                         context, AppConstants.routeCustomers),
+                  ),
+                  _DashTile(
+                    icon: Icons.receipt_long_outlined,
+                    label: 'Orders',
+                    subtitle: 'View & manage orders',
+                    color: Colors.orange,
+                    onTap: () =>
+                        Navigator.pushNamed(context, AppConstants.routeOrders),
                   ),
                 ],
               ),
@@ -180,7 +197,7 @@ class _WelcomeBanner extends StatelessWidget {
                             value: '${summary['total_bills'] ?? 0}',
                           ),
                           _StatItem(
-                            label: 'Total Sales',
+                            label: "Today's Sales",
                             value:
                                 '₹${((summary['total_sales'] ?? 0.0) as double).toStringAsFixed(0)}',
                           ),

@@ -132,7 +132,7 @@ def _generate_company_invoice_pdf(invoice_no: str) -> bytes:
     inv_time = hdr.get("invoice_time", "") or ""
     try:
         from datetime import datetime as _dt
-        inv_date_fmt = _dt.strptime(inv_date, "%Y-%m-%d").strftime("%-d %b %Y")
+        inv_date_fmt = _dt.strptime(inv_date, "%Y-%m-%d").strftime("%d %b %Y").lstrip("0")
     except Exception:
         inv_date_fmt = inv_date
     try:
@@ -221,7 +221,7 @@ def _generate_company_invoice_pdf(invoice_no: str) -> bytes:
         Paragraph("<b>AMOUNT</b>",      ps("ch5", 9, B, NAVY, TA_RIGHT)),
     ]
     tbl_data = [col_hdr]
-    for row in items:
+    for idx, row in enumerate(items):
         amt  = float(row.get("amount", 0))
         rate = float(row.get("rate", 0))
         qty  = float(row.get("quantity", 0))
@@ -232,7 +232,7 @@ def _generate_company_invoice_pdf(invoice_no: str) -> bytes:
             ps("cd1", 9, R, colors.black, TA_LEFT, leading=13)
         )
         tbl_data.append([
-            Paragraph(str(row["sno"]),     ps("cd0", 9, R, colors.black, TA_CENTER)),
+            Paragraph(str(row.get("sno", idx + 1)), ps("cd0", 9, R, colors.black, TA_CENTER)),
             desc_para,
             Paragraph(unit,                ps("cd2", 9, R, colors.black, TA_CENTER)),
             Paragraph(f"{qty:.2f}",        ps("cd3", 9, R, colors.black, TA_CENTER)),
@@ -387,7 +387,12 @@ def save_invoice_image():
 
     invoice_number = payload.get("invoice_number")
     image_data     = payload.get("image_data")
-    is_company     = bool(payload.get("is_company_invoice", False))
+    is_company_raw = payload.get("is_company_invoice", False)
+    # Accept real booleans, JSON strings and string "false"/"true" correctly.
+    if isinstance(is_company_raw, str):
+        is_company = is_company_raw.strip().lower() in ("true", "1", "yes")
+    else:
+        is_company = bool(is_company_raw)
 
     if not invoice_number or not image_data:
         return jsonify({"success": False,
@@ -645,14 +650,14 @@ def list_invoices(bucket: str):
         files = sb.storage.from_(bucket).list()
         invoices = [
             {
-                "file_name":      f["name"],
-                "invoice_number": f["name"].replace(".pdf", ""),
-                "size":           f.get("metadata", {}).get("size", 0),
+                "file_name":      f.get("name", ""),
+                "invoice_number": f.get("name", "").replace(".pdf", ""),
+                "size":           (f.get("metadata") or {}).get("size", 0),
                 "created_at":     f.get("created_at", ""),
-                "url":            sb.storage.from_(bucket).get_public_url(f["name"]),
+                "url":            sb.storage.from_(bucket).get_public_url(f.get("name", "")),
             }
             for f in files
-            if f["name"].endswith(".pdf")
+            if isinstance(f, dict) and f.get("name", "").endswith(".pdf")
         ]
         return jsonify({"success": True, "bucket": bucket, "invoices": invoices}), 200
 

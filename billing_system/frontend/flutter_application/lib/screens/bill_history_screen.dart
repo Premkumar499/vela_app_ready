@@ -295,7 +295,6 @@ class _BillHistoryScreenState extends State<BillHistoryScreen>
                 'rate': item.rate,
                 'amount': item.total,
                 'unit': item.unit,
-                'discount': item.discountPercent,
               })
           .toList(),
     };
@@ -516,13 +515,12 @@ class _CashBillPreviewScreenState extends State<_CashBillPreviewScreen> {
       isCompanyInvoice: false,
     );
 
-    setState(() => _isSaving = false);
-
     if (!mounted) return;
+    setState(() => _isSaving = false);
 
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(result['success'] == true
-          ? 'Saved: ${result['folder']}/${result['fileName']}'
+          ? 'Saved: ${result['bucket'] ?? ''}/${result['fileName'] ?? ''}'
           : result['message']?.toString() ?? 'Failed to save'),
       backgroundColor:
           result['success'] == true ? AppTheme.success : AppTheme.error,

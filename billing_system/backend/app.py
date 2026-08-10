@@ -10,7 +10,7 @@ from flask import Flask, jsonify
 from flask_cors import CORS
 
 from config import Config
-from routes import products_bp, customers_bp, billing_bp, history_bp, translate_bp, bilingual_bp
+from routes import products_bp, customers_bp, billing_bp, history_bp, translate_bp, bilingual_bp, auth_bp, reservations_bp, drafts_bp, salesperson_bills_bp
 from routes.invoice_export import invoice_export_bp
 
 
@@ -39,6 +39,10 @@ def create_app() -> Flask:
     app.register_blueprint(translate_bp)
     app.register_blueprint(bilingual_bp)
     app.register_blueprint(invoice_export_bp)
+    app.register_blueprint(auth_bp)
+    app.register_blueprint(reservations_bp)
+    app.register_blueprint(drafts_bp)
+    app.register_blueprint(salesperson_bills_bp)
 
     # -----------------------------------------------------------------------
     # Health-check endpoint

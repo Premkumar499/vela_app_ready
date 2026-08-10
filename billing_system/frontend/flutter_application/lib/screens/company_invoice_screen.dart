@@ -84,17 +84,16 @@ class _CompanyInvoiceScreenState extends State<CompanyInvoiceScreen> {
       isCompanyInvoice: true,
     );
 
+    if (!mounted) return;
     setState(() => _isSaving = false);
 
-    if (!mounted) return;
-
     if (result['success'] == true) {
-      final size = (result['size'] as int) / 1024; // Convert to KB
+      final size = (result['size'] as num?)?.toDouble() ?? 0.0;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Saved: ${result['folder']}/${result['fileName']}\n'
-            'Size: ${size.toStringAsFixed(1)} KB'
+            'Saved: ${result['bucket'] ?? ''}/${result['fileName'] ?? ''}\n'
+            'Size: ${(size / 1024).toStringAsFixed(1)} KB'
           ),
           backgroundColor: AppTheme.success,
           duration: const Duration(seconds: 4),
