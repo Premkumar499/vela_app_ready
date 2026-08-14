@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -24,24 +25,51 @@ import 'utils/constants.dart';
 import 'utils/theme.dart';
 
 void main() {
-  WidgetsFlutterBinding.ensureInitialized();
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
 
-  // Lock to landscape on tablets; allow portrait + landscape on phones.
-  SystemChrome.setPreferredOrientations([
-    DeviceOrientation.landscapeLeft,
-    DeviceOrientation.landscapeRight,
-    DeviceOrientation.portraitUp,
-  ]);
+    // Catch Flutter framework errors
+    FlutterError.onError = (FlutterErrorDetails details) {
+      FlutterError.presentError(details);
+      debugPrint('Flutter Error: ${details.exception}');
+    };
 
-  // Immersive UI – hide status bar on POS screens.
-  SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.light,
-    ),
-  );
+    // Provide a fallback UI for widget build errors
+    ErrorWidget.builder = (FlutterErrorDetails details) {
+      return const Material(
+        child: Center(
+          child: Padding(
+            padding: EdgeInsets.all(16.0),
+            child: Text(
+              'Oops! Something went wrong.\nAn unexpected error occurred in the UI.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.redAccent, fontSize: 16),
+            ),
+          ),
+        ),
+      );
+    };
 
-  runApp(const BillingApp());
+    // Lock to landscape on tablets; allow portrait + landscape on phones.
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+      DeviceOrientation.portraitUp,
+    ]);
+
+    // Immersive UI – hide status bar on POS screens.
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+      ),
+    );
+
+    runApp(const BillingApp());
+  }, (error, stack) {
+    // Catch asynchronous errors (futures, etc)
+    debugPrint('Async Error: $error\n$stack');
+  });
 }
 
 class BillingApp extends StatelessWidget {

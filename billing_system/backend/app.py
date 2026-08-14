@@ -70,6 +70,16 @@ def create_app() -> Flask:
     def internal_error(e):
         return jsonify({"success": False, "message": "Internal server error"}), 500
 
+    @app.errorhandler(Exception)
+    def handle_exception(e):
+        # Prevent any unexpected crash from breaking the JSON API structure
+        print(f"[ERROR] Unhandled Exception: {str(e)}", flush=True)
+        return jsonify({
+            "success": False,
+            "message": "An unexpected error occurred. Please try again later.",
+            "error": str(e) if app.debug else "Internal error"
+        }), 500
+
     start_salesperson_bill_polling(app)
 
     return app
