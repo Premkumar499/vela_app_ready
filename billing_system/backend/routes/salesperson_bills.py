@@ -15,8 +15,8 @@ salesperson_bills_bp = Blueprint("salesperson_bills", __name__, url_prefix="/sal
 
 @salesperson_bills_bp.get("/")
 def list_pending():
-    """List all PENDING bill requests from the salesmen."""
-    rows = salesperson_bill_service.list_pending()
+    """List all PENDING and ERROR bill requests from the salesmen."""
+    rows = salesperson_bill_service.list_pending(["PENDING", "ERROR"])
     return jsonify({"success": True, "data": rows}), 200
 
 

@@ -8,3 +8,5 @@ billing_system/frontend/flutter_application/.idea/
 graphify-out/
 .env
 *.env
+billing_system/backend/backups/
+billing_system/backend/invoices/

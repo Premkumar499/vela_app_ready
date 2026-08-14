@@ -37,7 +37,7 @@ class BillItem {
         unit:        p.unit,
         quantity:    quantity,
         rate:        p.price,
-        maxStock:    p.stock,
+        maxStock:    p.availableStock,
       );
 
   factory BillItem.fromJson(Map<String, dynamic> json) => BillItem(

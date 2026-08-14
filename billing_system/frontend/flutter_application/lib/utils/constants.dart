@@ -8,9 +8,13 @@ class AppConstants {
   // -------------------------------------------------------------------------
 
   /// Base URL for the Flask backend.
-  /// On an Android emulator use 10.0.2.2; on a physical device use your
-  /// machine's local IP address (e.g. 192.168.1.100).
-  static const String baseUrl = 'http://localhost:5000';
+  /// Defaults to localhost (same machine). Override per deployment with:
+  ///   flutter run --dart-define=API_URL=http://192.168.1.100:5000
+  /// (Android emulator uses 10.0.2.2; a physical device needs this machine's LAN IP.)
+  static const String baseUrl = String.fromEnvironment(
+    'API_URL',
+    defaultValue: 'http://localhost:5000',
+  );
 
   static const Duration requestTimeout = Duration(seconds: 15);
   static const Duration connectionTimeout = Duration(seconds: 5);
@@ -29,6 +33,9 @@ class AppConstants {
   static const String routeSplash = '/';
   static const String routeLogin = '/login';
   static const String routeDashboard = '/dashboard';
+  static const String routeAdminDashboard = '/admin';
+  static const String routeAdminProducts = '/admin/products';
+  static const String routeAdminCustomers = '/admin/customers';
   static const String routeBilling = '/billing';
   static const String routeProducts = '/products';
   static const String routeCustomers = '/customers';
@@ -36,6 +43,7 @@ class AppConstants {
   static const String routeOrders = '/orders';
   static const String routeBillDetails = '/bill-details';
   static const String routeSettings = '/settings';
+  static const String routeStockOut = '/stock-out';
 
   // -------------------------------------------------------------------------
   // Payment types

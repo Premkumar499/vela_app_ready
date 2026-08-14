@@ -6,14 +6,15 @@ Products and customers are still loaded from Supabase on startup.
 
 import os
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 
 from config import Config
 from models.product import Product
 from models.customer import Customer
 from models.bill import Bill, BillItem
-from services.sample_data import SAMPLE_PRODUCTS, SAMPLE_CUSTOMERS
+
 
 
 def _amount_in_words(amount: float) -> str:
@@ -39,8 +40,11 @@ def _amount_in_words(amount: float) -> str:
         else:
             return _words(n // 10000000) + ' Crore' + ((' ' + _words(n % 10000000)) if n % 10000000 else '')
 
-    rupees = int(amount)
-    paise  = round((amount - rupees) * 100)
+    # Compute rupees and paise in Decimal space (HALF_UP) so e.g. 123.999 → 124.00,
+    # never "123 Rupees and 100 Paise".
+    money_val = _money(amount)
+    rupees = int(money_val)
+    paise = int((money_val - rupees) * 100)
 
     # Handle rounding carry-over (e.g. 100.999 → paise == 100 → roll into rupees)
     if paise == 100:
@@ -100,57 +104,75 @@ def _safe_float(value, default: float = 0.0) -> float:
         return default
 
 
+_MONEY = Decimal("0.01")
+
+
+def _money(value) -> Decimal:
+    """Coerce a value to a 2-decimal money Decimal using HALF_UP rounding.
+
+    All money arithmetic in this service goes through this helper so line
+    amounts and the grand total are rounded consistently and the displayed
+    TOTAL always equals the sum of the line AMOUNTs (avoids float/banker's
+    rounding producing a 1-paise mismatch on printed invoices).
+    """
+    if value is None:
+        return Decimal("0")
+    if isinstance(value, Decimal):
+        return value.quantize(_MONEY, rounding=ROUND_HALF_UP)
+    try:
+        return Decimal(str(value)).quantize(_MONEY, rounding=ROUND_HALF_UP)
+    except (TypeError, ValueError, ArithmeticError):
+        return Decimal("0")
+
+
 class BillingService:
 
     def __init__(self) -> None:
         self._lock: threading.Lock = threading.Lock()
-        self._products: list[Product] = self._load_products_from_db()
-        self._customers: list[Customer] = self._load_customers_from_db()
-        self._hour_prefix: str = ""
-        self._hour_seq: int = 0
-        self._seed_hour_counter()
+        # Defer the network/DB loads until first use so importing the module
+        # (and constructing the singleton) does not hit Supabase / slow boot.
+        self._products: Optional[list[Product]] = None
+        self._customers: Optional[list[Customer]] = None
+        self._last_mint_minute: str = ""
+        self._seen_bill_numbers: set = set()
+
+    def _ensure_loaded(self) -> None:
+        """Lazily load products/customers on first use."""
+        if self._products is None:
+            self._products = self._load_products_from_db()
+            self._customers = self._load_customers_from_db()
 
 
     # ------------------------------------------------------------------
-    # Invoice number  →  2026AUG08A161  (bill 1 at 16:xx),  2026AUG08A172 (bill 2 at 17:xx)
-    # Format: YYYY + MMM(upper) + DD + A + HH + sequence(1…n)
-    # Sequence resets to 1 every new hour (or on server restart — seeded from DB)
+    # Invoice number  →  2026AUG121325A  (bill at 13:25 on 12 AUG 2026)
+    # Format: YYYY + MMM(upper) + DD + HHMM (time) + INVOICE_CONSTANT
+    # The time component gives each bill a unique number. If two bills are
+    # created in the same minute, the number rolls forward minute-by-minute
+    # so every bill stays unique.
     # ------------------------------------------------------------------
-
-    def _seed_hour_counter(self) -> None:
-        """Sync in-memory counter with the highest sequence in DB for the current hour."""
-        now = datetime.now()
-        prefix = now.strftime("%Y%b%d").upper() + Config.INVOICE_CONSTANT + now.strftime("%H")
-        try:
-            sb = _get_supabase_client()
-            resp = sb.table("erp_billing_system").select("bill_no").execute()
-            seqs = [
-                int(bn[len(prefix):])
-                for row in resp.data
-                for bn in [row.get("bill_no", "")]
-                if bn.startswith(prefix) and bn[len(prefix):].isdigit()
-            ]
-            self._hour_prefix = prefix
-            self._hour_seq = max(seqs, default=0)
-        except Exception:
-            self._hour_prefix = prefix
-            self._hour_seq = 0
 
     def _next_bill_number(self) -> str:
-        # Lock guards the whole read-modify-write so two concurrent saves in the
-        # same hour cannot mint the same bill_no (previously a UNIQUE violation →
-        # one sale lost). The DB itself has no sequence for this format, so the
-        # in-process lock is the only protection against duplicates.
         with self._lock:
-            now = datetime.now()
-            current_prefix = now.strftime("%Y%b%d").upper() + Config.INVOICE_CONSTANT + now.strftime("%H")
-            # Hour rolled over — re-seed from DB for the new hour
-            if current_prefix != self._hour_prefix:
-                self._hour_prefix = current_prefix
-                self._hour_seq = 0
-                self._seed_hour_counter()
-            self._hour_seq += 1
-            return self._hour_prefix + str(self._hour_seq)
+            base = datetime.now()
+            for _ in range(60):
+                candidate = self._format_bill_number(base)
+                if candidate not in self._seen_bill_numbers and not self._bill_number_exists(candidate):
+                    self._seen_bill_numbers.add(candidate)
+                    return candidate
+                base += timedelta(minutes=1)
+            return self._format_bill_number(datetime.now())
+
+    @staticmethod
+    def _format_bill_number(dt: datetime) -> str:
+        return dt.strftime("%Y%b%d").upper() + dt.strftime("%H%M") + Config.INVOICE_CONSTANT
+
+    def _bill_number_exists(self, bill_no: str) -> bool:
+        try:
+            sb = _get_supabase_client()
+            resp = sb.table("erp_billing_system").select("bill_no").eq("bill_no", bill_no).limit(1).execute()
+            return bool(resp.data)
+        except Exception:
+            return False
 
 
     # ------------------------------------------------------------------
@@ -163,15 +185,20 @@ class BillingService:
 
             # Expire any stale reservations before loading so stock is accurate
             try:
-                sb.rpc("expire_stale_reservations", {}).execute()
+                from services.reservation_service import reservation_service as _rs
+                _rs.expire_stale_reservations()
+                _rs.expire_stale_holds(hours=2)
             except Exception:
                 pass  # Non-fatal
 
-            inv_resp = sb.table("inventory").select("product_id, current_stock").execute()
-            stock_map: dict[str, float] = {
-                str(r.get("product_id")): _safe_float(r.get("current_stock"))
-                for r in inv_resp.data
-            }
+            inv_resp = sb.table("inventory").select(
+                "product_id, current_stock, reserved_stock").execute()
+            stock_map: dict[str, float] = {}
+            reserved_map: dict[str, float] = {}
+            for r in inv_resp.data:
+                pid = str(r.get("product_id"))
+                stock_map[pid] = _safe_float(r.get("current_stock"))
+                reserved_map[pid] = _safe_float(r.get("reserved_stock"))
             resp = sb.table("products").select(
                 "product_id, product_name, selling_price, sku, product_image,"
                 "categories(name), units(unit_name), brands(brand_name)"
@@ -187,6 +214,8 @@ class BillingService:
                     price=_safe_float(row.get("selling_price")),
                     mrp=_safe_float(row.get("selling_price")),
                     stock=stock_map.get(pid, 0.0),
+                    reserved=reserved_map.get(pid, 0.0),
+                    available_stock=stock_map.get(pid, 0.0) - reserved_map.get(pid, 0.0),
                     category=((row.get("categories") or {}).get("name") or "General"),
                     description=" | ".join(filter(None, [
                         str(row.get("sku") or ""),
@@ -199,7 +228,7 @@ class BillingService:
         except Exception as exc:
             import traceback; traceback.print_exc()
             print(f"[BillingService] Product load failed: {exc}")
-            return list(SAMPLE_PRODUCTS)
+            return []
 
 
     # ------------------------------------------------------------------
@@ -236,7 +265,7 @@ class BillingService:
             return customers
         except Exception as exc:
             import traceback; traceback.print_exc()
-            return [walk_in] + list(SAMPLE_CUSTOMERS)
+            return [walk_in]
 
 
     # ------------------------------------------------------------------
@@ -244,48 +273,42 @@ class BillingService:
     # ------------------------------------------------------------------
 
     def get_all_products(self) -> list[dict]:
+        self._ensure_loaded()
         return [p.to_dict() for p in self._products]
 
     def get_product_by_id(self, product_id: str) -> Optional[dict]:
+        self._ensure_loaded()
         for p in self._products:
             if p.id == str(product_id):
                 return p.to_dict()
         return None
 
     def get_products_by_category(self, category: str) -> list[dict]:
+        self._ensure_loaded()
         return [p.to_dict() for p in self._products if p.category.lower() == category.lower()]
 
     def search_products(self, query: str) -> list[dict]:
+        self._ensure_loaded()
         q = query.lower()
         return [p.to_dict() for p in self._products if q in p.name.lower() or q in p.category.lower()]
-
-    def _deduct_stock(self, product_id, quantity: float) -> None:
-        for p in self._products:
-            if p.id == str(product_id):
-                p.stock = max(0.0, p.stock - quantity)
-                break
-
-    def _restore_stock(self, product_id, quantity: float) -> None:
-        for p in self._products:
-            if p.id == str(product_id):
-                p.stock += quantity
-                break
-
 
     # ------------------------------------------------------------------
     # Customers – public API
     # ------------------------------------------------------------------
 
     def get_all_customers(self) -> list[dict]:
+        self._ensure_loaded()
         return [c.to_dict() for c in self._customers]
 
     def get_customer_by_id(self, customer_id: str) -> Optional[dict]:
+        self._ensure_loaded()
         for c in self._customers:
             if c.id == customer_id:
                 return c.to_dict()
         return None
 
     def search_customers(self, query: str) -> list[dict]:
+        self._ensure_loaded()
         q = query.lower()
         return [
             c.to_dict() for c in self._customers
@@ -293,6 +316,7 @@ class BillingService:
         ]
 
     def create_customer(self, name: str, phone: str = "", email: str = "", address: str = "") -> dict:
+        self._ensure_loaded()
         try:
             sb = _get_supabase_client()
             resp = sb.table("customers").insert({
@@ -315,6 +339,172 @@ class BillingService:
             import traceback; traceback.print_exc()
             return {"success": False, "message": str(exc)}
 
+    def update_customer(self, customer_id: str, name: str, phone: str = "",
+                        email: str = "", address: str = "") -> dict:
+        self._ensure_loaded()
+        try:
+            sb = _get_supabase_client()
+            resp = (
+                sb.table("customers")
+                .update({
+                    "name": name,
+                    "phone": phone or None,
+                    "email": email or None,
+                    "address": address or None,
+                })
+                .eq("customer_id", customer_id)
+                .execute()
+            )
+            if not resp.data:
+                return {"success": False, "message": "Customer not found"}
+            row = resp.data[0]
+            self._customers = None  # force reload on next read
+            return {"success": True, "data": Customer(
+                id=str(row.get("customer_id") or row.get("id")),
+                name=row.get("name") or name,
+                phone=row.get("phone") or "",
+                address=row.get("address") or "",
+                email=row.get("email") or "",
+            ).to_dict()}
+        except Exception as exc:
+            import traceback; traceback.print_exc()
+            return {"success": False, "message": str(exc)}
+
+    def delete_customer(self, customer_id: str) -> dict:
+        self._ensure_loaded()
+        try:
+            sb = _get_supabase_client()
+            resp = (
+                sb.table("customers")
+                .delete()
+                .eq("customer_id", customer_id)
+                .execute()
+            )
+            if not resp.data:
+                return {"success": False, "message": "Customer not found"}
+            self._customers = None  # force reload on next read
+            return {"success": True, "message": "Customer deleted"}
+        except Exception as exc:
+            import traceback; traceback.print_exc()
+            return {"success": False, "message": str(exc)}
+
+
+    # ------------------------------------------------------------------
+    # Products – ADMIN CRUD (Supabase)
+    # ------------------------------------------------------------------
+
+    def _find_or_create_ref(self, table: str, name_col: str, name: str) -> str:
+        """Find a categories/units/brands row by name; create it if missing."""
+        sb = _get_supabase_client()
+        resp = sb.table(table).select("id").eq(name_col, name).limit(1).execute()
+        if resp.data:
+            return str(resp.data[0]["id"])
+        ins = sb.table(table).insert({name_col: name}).execute()
+        return str(ins.data[0]["id"])
+
+    def _reload_products(self) -> None:
+        """Force a fresh product load from the DB on the next access."""
+        self._products = None
+        self._ensure_loaded()
+
+    def create_product(self, name: str, price: float, stock: float,
+                       category: str = "General", unit: str = "PCS",
+                       sku: str = "") -> dict:
+        self._ensure_loaded()
+        try:
+            sb = _get_supabase_client()
+            category_id = self._find_or_create_ref("categories", "name", category or "General")
+            unit_id = self._find_or_create_ref("units", "unit_name", unit or "PCS")
+            resp = sb.table("products").insert({
+                "product_name": name,
+                "selling_price": float(price),
+                "sku": sku or None,
+                "gst_percentage": 0,
+                "category_id": category_id,
+                "unit_id": unit_id,
+            }).execute()
+            product_id = str(resp.data[0]["product_id"])
+            try:
+                sb.table("inventory").insert({
+                    "product_id": product_id,
+                    "current_stock": float(stock),
+                    "reserved_stock": 0,
+                }).execute()
+            except Exception as inv_exc:
+                print(f"[create_product] WARNING: inventory insert failed: {inv_exc}")
+            self._reload_products()
+            return {"success": True, "data": self.get_product_by_id(product_id)}
+        except Exception as exc:
+            import traceback; traceback.print_exc()
+            return {"success": False, "message": str(exc)}
+
+    def update_product(self, product_id: str, name: str, price: float,
+                       stock: float, category: str = "General",
+                       unit: str = "PCS", sku: str = "") -> dict:
+        self._ensure_loaded()
+        try:
+            sb = _get_supabase_client()
+            category_id = self._find_or_create_ref("categories", "name", category or "General")
+            unit_id = self._find_or_create_ref("units", "unit_name", unit or "PCS")
+            resp = (
+                sb.table("products")
+                .update({
+                    "product_name": name,
+                    "selling_price": float(price),
+                    "sku": sku or None,
+                    "category_id": category_id,
+                    "unit_id": unit_id,
+                })
+                .eq("product_id", product_id)
+                .execute()
+            )
+            if not resp.data:
+                return {"success": False, "message": "Product not found"}
+            # Sync stock into the inventory table (insert row if missing).
+            inv = (
+                sb.table("inventory")
+                .update({"current_stock": float(stock)})
+                .eq("product_id", product_id)
+                .execute()
+            )
+            if not inv.data:
+                try:
+                    sb.table("inventory").insert({
+                        "product_id": product_id,
+                        "current_stock": float(stock),
+                        "reserved_stock": 0,
+                    }).execute()
+                except Exception as inv_exc:
+                    print(f"[update_product] WARNING: inventory insert failed: {inv_exc}")
+            self._reload_products()
+            return {"success": True, "data": self.get_product_by_id(product_id)}
+        except Exception as exc:
+            import traceback; traceback.print_exc()
+            return {"success": False, "message": str(exc)}
+
+    def delete_product(self, product_id: str) -> dict:
+        self._ensure_loaded()
+        try:
+            sb = _get_supabase_client()
+            # Remove inventory row first (FK safety), then the product itself.
+            try:
+                sb.table("inventory").delete().eq("product_id", product_id).execute()
+            except Exception as inv_exc:
+                print(f"[delete_product] WARNING: inventory delete failed: {inv_exc}")
+            resp = (
+                sb.table("products")
+                .delete()
+                .eq("product_id", product_id)
+                .execute()
+            )
+            if not resp.data:
+                return {"success": False, "message": "Product not found"}
+            self._reload_products()
+            return {"success": True, "message": "Product deleted"}
+        except Exception as exc:
+            import traceback; traceback.print_exc()
+            return {"success": False, "message": str(exc)}
+
 
     # ------------------------------------------------------------------
     # Bills – CREATE (save to Supabase erp_billing_system)
@@ -325,14 +515,22 @@ class BillingService:
         if errors:
             return {"success": False, "message": "; ".join(errors)}
 
+        self._ensure_loaded()
         bill_number = self._next_bill_number()
         now = datetime.now()
         items = payload.get("items", [])
 
-        grand_total = round(sum(
-            _safe_float(i.get("rate", 0)) * _safe_float(i.get("quantity", 0))
-            for i in items
-        ), 2)
+        # Compute line amounts and the grand total in one pass, rounding each
+        # line with HALF_UP so the stored TOTAL always equals the sum of the
+        # stored line AMOUNTs (no 1-paise drift on printed invoices).
+        line_totals: list[Decimal] = []
+        total_quantity = Decimal("0")
+        for item in items:
+            qty = _money(item.get("quantity", 0))
+            rate = _money(item.get("rate", 0))
+            line_totals.append((qty * rate).quantize(_MONEY, rounding=ROUND_HALF_UP))
+            total_quantity += qty
+        grand_total = float(sum(line_totals, Decimal("0")))
 
         bill_header = {
             "business_name":  "VELA AGENCY",
@@ -341,7 +539,7 @@ class BillingService:
             "bill_time":      now.strftime("%H:%M:%S"),
             "payment_mode":   payload.get("payment_type", "Cash").upper(),
             "total_items":    len(items),
-            "total_quantity": round(sum(_safe_float(i.get("quantity", 0)) for i in items), 2),
+            "total_quantity": float(total_quantity),
             "grand_total":    grand_total,
             # ── Salesman-input fields ──────────────────────────────
             "customer_name":  payload.get("customer_name", "Walk-in Customer"),
@@ -359,11 +557,9 @@ class BillingService:
                     "bill_id":     parent_id,
                     "sno":         idx + 1,
                     "description": item.get("product_name", ""),
-                    "quantity":    _safe_float(item.get("quantity", 0)),
-                    "rate":        _safe_float(item.get("rate", 0)),
-                    "amount":      round(
-                        _safe_float(item.get("rate", 0)) * _safe_float(item.get("quantity", 0)), 2
-                    ),
+                    "quantity":    float(_money(item.get("quantity", 0))),
+                    "rate":        float(_money(item.get("rate", 0))),
+                    "amount":      float(line_totals[idx]),
                     "product_id":  item.get("product_id") or None,
                 }
                 for idx, item in enumerate(items)
@@ -377,11 +573,9 @@ class BillingService:
                     "sno":         idx + 1,
                     "description": item.get("product_name", ""),
                     "unit":        item.get("unit", "Nos"),
-                    "quantity":    _safe_float(item.get("quantity", 0)),
-                    "rate":        _safe_float(item.get("rate", 0)),
-                    "amount":      round(
-                        _safe_float(item.get("rate", 0)) * _safe_float(item.get("quantity", 0)), 2
-                    ),
+                    "quantity":    float(_money(item.get("quantity", 0))),
+                    "rate":        float(_money(item.get("rate", 0))),
+                    "amount":      float(line_totals[idx]),
                     "product_id":  item.get("product_id") or None,
                 }
                 for idx, item in enumerate(items)
@@ -421,58 +615,61 @@ class BillingService:
                 sb.table("erp_billing_system_company_items").insert(_company_line_rows(invoice_id)).execute()
                 print(f"[create_bill] Company invoice saved to DB: {bill_number}")
             except Exception as company_exc:
+                # Never leave a half-saved bill (user row without company row).
+                # Roll back the user bill so the DB stays consistent and the
+                # caller gets a clear failure they can safely retry.
                 import traceback; traceback.print_exc()
-                print(f"[create_bill] WARNING: Company invoice DB insert failed: {company_exc}")
+                try:
+                    sb.table("erp_billing_system").delete().eq("bill_id", bill_id).execute()
+                    print(f"[create_bill] ROLLED BACK user bill: {bill_number}")
+                except Exception as rb_exc:
+                    print(f"[create_bill] Rollback of user bill failed: {rb_exc}")
+                raise RuntimeError(f"Company invoice DB insert failed: {company_exc}") from company_exc
 
-            # ── 3. Complete reservations (stock already deducted at reserve time) ──
-            # complete_bill_reservations only decrements reserved_stock;
-            # current_stock was already reduced when the reservation was created.
-            # IMPORTANT: Do NOT call reserve_stock here — that would double-deduct.
+            # ── 3. Link holds from the draft to the real bill number ──
+            # Holds stay HELD; stock is NOT deducted at save time. Only the
+            # stock-out person's release_hold reduces current_stock later.
             draft_bill_id = payload.get("draft_bill_id")
             if draft_bill_id:
                 try:
                     from services.reservation_service import reservation_service as _rs
                     from services.draft_service import draft_service as _ds
-                    rs_result = _rs.complete_bill_reservations(str(draft_bill_id))
+                    rs_result = _rs.link_holds_to_bill(str(draft_bill_id), bill_number)
                     if rs_result.get("success"):
-                        print(f"[create_bill] Reservations completed for draft: {draft_bill_id}")
+                        print(f"[create_bill] Holds linked from draft {draft_bill_id} to bill {bill_number}")
                     else:
-                        print(f"[create_bill] WARNING: complete_bill_reservations: {rs_result.get('message')}")
+                        print(f"[create_bill] WARNING: link_holds_to_bill: {rs_result.get('message')}")
                     # Mark the bill_drafts row as COMPLETED
                     _ds.complete_draft(str(draft_bill_id))
                 except Exception as rs_exc:
-                    print(f"[create_bill] WARNING: reservation/draft completion failed: {rs_exc}")
-            else:                # No draft_bill_id: bill was saved without going through the reservation
-                # flow (e.g. direct API call).  Deduct stock directly using a dedicated
-                # RPC so the operation is still atomic and row-locked.
-                # This path should be rare in normal POS usage.
+                    print(f"[create_bill] WARNING: hold/draft linking failed: {rs_exc}")
+            else:                # No draft_bill_id: bill was saved without going through the
+                # draft flow (e.g. direct API call / salesperson push).
+                # Create holds keyed to the real bill number so they appear
+                # in the reserve table for the stock-out person.
                 from services.reservation_service import reservation_service as _rs
-                tmp_bill_id = f"DIRECT-{bill_number}"
                 for item in items:
                     try:
                         pid = item.get("product_id")
                         qty = float(item.get("quantity", 0))
                         if pid and qty > 0:
-                            r = _rs.reserve_stock(
-                                product_id=str(pid),
-                                bill_id=tmp_bill_id,
-                                quantity=qty,
-                                user_id=None,
-                            )
-                            if r.get("success"):
-                                # Immediately complete so reserved_stock is also cleared
-                                _rs.complete_bill_reservations(tmp_bill_id)
+                            _rs.hold_stock(product_id=str(pid), bill_id=bill_number, quantity=qty)
                     except Exception:
-                        pass  # Non-fatal – stock sync best-effort
+                        pass  # Non-fatal – stock hold best-effort
 
             # ── 4. Generate and upload company invoice PDF to bucket ────
+            # Non-fatal: the bill is already saved and can be regenerated via
+            # POST /invoice-export/generate-company/<invoice_number>. Surface it
+            # as a warning instead of swallowing it silently.
+            warnings: list[str] = []
             try:
-                self._generate_and_upload_company_pdf(bill_number)
+                is_salesperson_bill = payload.get("is_salesperson_bill", False) or bool(payload.get("through"))
+                self._generate_and_upload_company_pdf(bill_number, is_salesperson_bill=is_salesperson_bill)
                 print(f"[create_bill] Company PDF uploaded to bucket: {bill_number}")
             except Exception as pdf_exc:
                 import traceback; traceback.print_exc()
                 print(f"[create_bill] WARNING: Company PDF generation failed: {pdf_exc}")
-                # Non-fatal - bill is already saved, PDF can be regenerated later
+                warnings.append(f"Company PDF generation failed: {pdf_exc}")
 
             bill = Bill.from_dict({
                 **payload,
@@ -484,6 +681,7 @@ class BillingService:
                 "success": True,
                 "message": "Bill Saved Successfully",
                 "bill_number": bill_number,
+                "warnings": warnings,
                 "bill": bill.to_dict(),
             }
 
@@ -496,16 +694,20 @@ class BillingService:
     # Bills – READ / DELETE (from Supabase)
     # ------------------------------------------------------------------
 
-    def get_all_bills(self) -> list[dict]:
+    def get_all_bills(self, limit: int = 200, offset: int = 0) -> list[dict]:
         try:
             sb = _get_supabase_client()
             rows = (
                 sb.table("erp_billing_system")
                 .select("*, erp_billing_system_items(*)")
                 .order("created_at", desc=True)
+                .range(offset, offset + max(limit, 1) - 1)
                 .execute()
             ).data
-            return [self._row_to_bill_dict(r) for r in rows]
+            # Batch-load the company meta (customer_name + line units) in ONE
+            # query instead of one query per bill (N+1).
+            comp_map = self._company_meta_map([r["bill_no"] for r in rows])
+            return [self._row_to_bill_dict(r, comp_map) for r in rows]
         except Exception as exc:
             print(f"[BillingService] get_all_bills failed: {exc}")
             return []
@@ -519,7 +721,10 @@ class BillingService:
                 .eq("bill_no", bill_number)
                 .execute()
             ).data
-            return self._row_to_bill_dict(rows[0]) if rows else None
+            if not rows:
+                return None
+            comp_map = self._company_meta_map([bill_number])
+            return self._row_to_bill_dict(rows[0], comp_map)
         except Exception as exc:
             print(f"[BillingService] get_bill_by_number failed: {exc}")
             return None
@@ -556,7 +761,7 @@ class BillingService:
 
             # ── 3. Delete PDFs from both Storage buckets ─────────────────
             pdf_file = f"{bill_number}.pdf"
-            for bucket in ("erp_billing_system", "erp_billing_system_company"):
+            for bucket in ("erp_billing_system", "erp_billing_system_company", "salesperson_bill", "salesperson_bill_user"):
                 try:
                     sb.storage.from_(bucket).remove([pdf_file])
                     print(f"[delete_bill] Storage bucket '{bucket}' removed: {pdf_file}")
@@ -564,17 +769,19 @@ class BillingService:
                     # File may not exist in bucket — not a fatal error
                     print(f"[delete_bill] Storage bucket '{bucket}' skip ({bucket_exc})")
 
-            # ── 4. Release reservations if bill is deleted ────────────────────
+            # ── 4. Cancel holds if bill is deleted (no stock restore) ────
+            # Holds never deducted current_stock, so deletion only frees
+            # reserved_stock. Already-RELEASED holds stay released.
             try:
                 from services.reservation_service import reservation_service as _rs
                 # Try by bill_id (UUID) first, then by bill_no
-                _rs.release_bill_reservations(user_rows[0]["bill_id"])
-                _rs.release_bill_reservations(bill_number)
+                _rs.cancel_bill_holds(user_rows[0]["bill_id"])
+                _rs.cancel_bill_holds(bill_number)
             except Exception as rs_exc:
-                print(f"[delete_bill] WARNING: reservation release failed: {rs_exc}")
+                print(f"[delete_bill] WARNING: hold cancellation failed: {rs_exc}")
 
-            # ── 5. Re-sync hour counter so next bill continues from real max ──
-            self._seed_hour_counter()
+            # ── 5. Allow reusing the freed bill number if minted in this process ──
+            self._seen_bill_numbers.discard(bill_number)
 
             return {"success": True, "message": f"Bill {bill_number} deleted"}
         except Exception as exc:
@@ -586,7 +793,38 @@ class BillingService:
     # Helper – Supabase row → Bill dict (same shape Flutter expects)
     # ------------------------------------------------------------------
 
-    def _row_to_bill_dict(self, row: dict) -> dict:
+    def _company_meta_map(self, bill_nos: list[str]) -> dict:
+        """
+        Fetch customer_name + line units from the company table for a set of
+        bill numbers in a single query. Returns {invoice_no: {...}}.
+        """
+        if not bill_nos:
+            return {}
+        try:
+            sb = _get_supabase_client()
+            comp_rows = (
+                sb.table("erp_billing_system_company")
+                .select("invoice_no, customer_name, erp_billing_system_company_items(sno, unit)")
+                .in_("invoice_no", bill_nos)
+                .execute()
+            ).data
+        except Exception as exc:
+            print(f"[BillingService] _company_meta_map failed: {exc}")
+            return {}
+
+        meta: dict = {}
+        for cr in comp_rows:
+            units = {
+                ci.get("sno", 0): (ci.get("unit") or "Nos")
+                for ci in (cr.get("erp_billing_system_company_items") or [])
+            }
+            meta[cr["invoice_no"]] = {
+                "customer_name": cr.get("customer_name") or "",
+                "units": units,
+            }
+        return meta
+
+    def _row_to_bill_dict(self, row: dict, comp_map: Optional[dict] = None) -> dict:
         items_raw = sorted(
             row.get("erp_billing_system_items") or [],
             key=lambda x: x.get("sno", 0)
@@ -595,21 +833,11 @@ class BillingService:
         # Try to get customer_name and unit from the company invoice table
         company_units: dict[int, str] = {}
         customer_name_from_company = ""
-        try:
-            sb = _get_supabase_client()
-            bill_no = row["bill_no"]
-            comp_rows = (
-                sb.table("erp_billing_system_company")
-                .select("customer_name, erp_billing_system_company_items(sno, unit)")
-                .eq("invoice_no", bill_no)
-                .execute()
-            ).data
-            if comp_rows:
-                customer_name_from_company = comp_rows[0].get("customer_name") or ""
-                for ci in (comp_rows[0].get("erp_billing_system_company_items") or []):
-                    company_units[ci.get("sno", 0)] = ci.get("unit") or "Nos"
-        except Exception:
-            pass
+        if comp_map is None:
+            comp_map = self._company_meta_map([row["bill_no"]])
+        comp = comp_map.get(row["bill_no"], {})
+        company_units = comp.get("units", {}) or {}
+        customer_name_from_company = comp.get("customer_name", "") or ""
 
         bill_items = [
             {
@@ -657,6 +885,7 @@ class BillingService:
     # ------------------------------------------------------------------
 
     def get_dashboard_summary(self) -> dict:
+        self._ensure_loaded()
         try:
             sb = _get_supabase_client()
             resp = sb.table("erp_billing_system").select("grand_total").execute()
@@ -675,24 +904,63 @@ class BillingService:
     # Company PDF Generation and Upload
     # ------------------------------------------------------------------
 
-    def _generate_and_upload_company_pdf(self, bill_number: str) -> None:
+    def _generate_and_upload_company_pdf(self, bill_number: str, is_salesperson_bill: bool = False) -> None:
         """
-        Generate company invoice PDF from DB and upload to erp_billing_system_company bucket.
+        Generate company invoice PDF from DB and upload to erp_billing_system_company or salesperson_bill bucket.
         This is called automatically after bill creation.
         """
         # Import here to avoid circular imports
-        from routes.invoice_export import _generate_company_invoice_pdf
+        from routes.invoice_export import _generate_company_invoice_pdf, _generate_user_bill_pdf
         
         pdf_bytes = _generate_company_invoice_pdf(bill_number)
         file_name = f"{bill_number}.pdf"
         
         sb = _get_supabase_client()
-        sb.storage.from_("erp_billing_system_company").upload(
-            path=file_name,
-            file=pdf_bytes,
-            file_options={"content-type": "application/pdf", "upsert": "true"},
-        )
-        print(f"[_generate_and_upload_company_pdf] SUCCESS: Uploaded {file_name} to erp_billing_system_company bucket")
+        
+        if is_salesperson_bill:
+            # Upload to salesperson_bill (company invoice layout)
+            try:
+                sb.storage.from_("salesperson_bill").upload(
+                    path=file_name,
+                    file=pdf_bytes,
+                    file_options={"content-type": "application/pdf", "upsert": "true"},
+                )
+                print(f"[_generate_and_upload_company_pdf] SUCCESS: Uploaded {file_name} to salesperson_bill bucket")
+            except Exception as e:
+                print(f"[_generate_and_upload_company_pdf] ERROR uploading to salesperson_bill: {e}")
+                
+            # Upload to salesperson_bill_user (user receipt thermal layout)
+            try:
+                user_pdf_bytes = _generate_user_bill_pdf(bill_number)
+                sb.storage.from_("salesperson_bill_user").upload(
+                    path=file_name,
+                    file=user_pdf_bytes,
+                    file_options={"content-type": "application/pdf", "upsert": "true"},
+                )
+                print(f"[_generate_and_upload_company_pdf] SUCCESS: Uploaded {file_name} to salesperson_bill_user bucket")
+            except Exception as e:
+                print(f"[_generate_and_upload_company_pdf] ERROR uploading to salesperson_bill_user: {e}")
+        else:
+            try:
+                sb.storage.from_("erp_billing_system_company").upload(
+                    path=file_name,
+                    file=pdf_bytes,
+                    file_options={"content-type": "application/pdf", "upsert": "true"},
+                )
+                print(f"[_generate_and_upload_company_pdf] SUCCESS: Uploaded {file_name} to erp_billing_system_company bucket")
+            except Exception as e:
+                print(f"[_generate_and_upload_company_pdf] ERROR uploading to erp_billing_system_company: {e}")
+                
+            try:
+                user_pdf_bytes = _generate_user_bill_pdf(bill_number)
+                sb.storage.from_("erp_billing_system").upload(
+                    path=file_name,
+                    file=user_pdf_bytes,
+                    file_options={"content-type": "application/pdf", "upsert": "true"},
+                )
+                print(f"[_generate_and_upload_company_pdf] SUCCESS: Uploaded {file_name} to erp_billing_system bucket")
+            except Exception as e:
+                print(f"[_generate_and_upload_company_pdf] ERROR uploading to erp_billing_system: {e}")
 
     # ------------------------------------------------------------------
     # Validation
@@ -721,5 +989,18 @@ class BillingService:
         return errors
 
 
-# Module-level singleton
-billing_service = BillingService()
+# Module-level singleton, created lazily so importing the module (or the Flask
+# app) never performs network/DB work at import time.
+_billing_service_instance: Optional["BillingService"] = None
+
+
+def get_billing_service() -> "BillingService":
+    global _billing_service_instance
+    if _billing_service_instance is None:
+        _billing_service_instance = BillingService()
+    return _billing_service_instance
+
+
+# Backwards-compatible module-level singleton. Construction is cheap
+# (no network/DB work); lazy loading happens on first use.
+billing_service = get_billing_service()

@@ -1,0 +1,9 @@
+billing_system/backend/__pycache__
+billing_system/backend/.pytest_cache
+billing_system/backend/venv
+billing_system/backend/.env
+
+billing_system/frontend/flutter_application/.dart_tool
+billing_system/frontend/flutter_application/build
+billing_system/frontend/flutter_application/.flutter-plugins
+billing_system/frontend/flutter_application/.flutter-plugins-dependencies

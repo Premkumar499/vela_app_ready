@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/api_service.dart';
+import '../services/session_service.dart';
 import '../utils/constants.dart';
 import '../utils/theme.dart';
 
@@ -52,7 +53,17 @@ class _SplashScreenState extends State<SplashScreen>
     if (isUp) {
       setState(() => _statusMessage = 'Connected ✓');
       await Future.delayed(const Duration(milliseconds: 600));
-      if (mounted) {
+
+      // Auto-login when a saved session exists (Remember me was ticked).
+      final session = await SessionService.getSession();
+      if (!mounted) return;
+
+      if (session != null) {
+        // Admin (role_id 1) → Admin Panel; Billing Employee (role_id 3) → Biller dashboard.
+        Navigator.pushReplacementNamed(
+            context, SessionService.homeRouteOf(session),
+            arguments: session);
+      } else {
         Navigator.pushReplacementNamed(context, AppConstants.routeLogin);
       }
     } else {

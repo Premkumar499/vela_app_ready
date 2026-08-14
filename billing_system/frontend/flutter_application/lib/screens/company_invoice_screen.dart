@@ -52,25 +52,47 @@ class _CompanyInvoiceScreenState extends State<CompanyInvoiceScreen> {
               icon: const Icon(Icons.share),
               onPressed: () {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Share functionality coming soon')),
+                  const SnackBar(
+                      content: Text('Share functionality coming soon')),
                 );
               },
             ),
           ],
         ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Center(
-          child: RepaintBoundary(
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final isNarrow = constraints.maxWidth < 700;
+          final invoiceWidget = RepaintBoundary(
             key: _invoiceKey,
             child: Container(
-              constraints: const BoxConstraints(maxWidth: 900),
               color: Colors.white,
               child: InvoicePreview(invoice: invoice),
             ),
-          ),
-        ),
+          );
+          if (isNarrow) {
+            return SingleChildScrollView(
+              padding: const EdgeInsets.all(8.0),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.topCenter,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 900),
+                  child: invoiceWidget,
+                ),
+              ),
+            );
+          }
+          return SingleChildScrollView(
+            padding: const EdgeInsets.all(16.0),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 900),
+                child: invoiceWidget,
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -92,9 +114,8 @@ class _CompanyInvoiceScreenState extends State<CompanyInvoiceScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Saved: ${result['bucket'] ?? ''}/${result['fileName'] ?? ''}\n'
-            'Size: ${(size / 1024).toStringAsFixed(1)} KB'
-          ),
+              'Saved: ${result['bucket'] ?? ''}/${result['fileName'] ?? ''}\n'
+              'Size: ${(size / 1024).toStringAsFixed(1)} KB'),
           backgroundColor: AppTheme.success,
           duration: const Duration(seconds: 4),
         ),
@@ -102,7 +123,8 @@ class _CompanyInvoiceScreenState extends State<CompanyInvoiceScreen> {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(result['message']?.toString() ?? 'Failed to save invoice'),
+          content:
+              Text(result['message']?.toString() ?? 'Failed to save invoice'),
           backgroundColor: AppTheme.error,
           duration: const Duration(seconds: 3),
         ),

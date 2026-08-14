@@ -11,7 +11,11 @@ Tests cover:
   - Expiry
   - Duplicate reservation protection
   - Multiple products per draft
-  - Double-deduction prevention
+  - Double-deduction prevention (create_bill links holds, never deducts)
+  - Hold RPC wrappers (migration 0011): hold / release / cancel / update /
+    cancel-bill / link / expire-stale
+  - get_held_reservations (reserve-table grouping + company join)
+  - Hold API endpoints
 
 These tests mock the Supabase RPC layer so they run without a live DB.
 For live integration testing, run against a real Supabase instance.
@@ -656,27 +660,25 @@ class TestReservationAPI:
 
 class TestDoubleDeductionPrevention:
     """
-    Verifies that create_bill calls complete_bill_reservations (not reserve_stock)
-    when a draft_bill_id is provided, preventing double-deduction.
+    Verifies that create_bill calls link_holds_to_bill (not reserve_stock /
+    complete_bill_reservations) when a draft_bill_id is provided.
+    Holds stay HELD: current_stock is never deducted at bill time.
     """
 
-    def test_create_bill_with_draft_calls_complete_not_reserve(self):
+    def test_create_bill_with_draft_links_holds_not_completes(self):
         from services.billing_service import BillingService
         svc = BillingService()
 
-        # Patch the reservation service so we can spy on it
-        with patch("services.reservation_service.ReservationService.complete_bill_reservations") as mock_complete, \
+        # Patch the reservation service so we can spy on it, and the cached
+        # Supabase client so create_bill's DB writes never hit the network.
+        with patch("services.reservation_service.ReservationService.link_holds_to_bill") as mock_link, \
+             patch("services.reservation_service.ReservationService.complete_bill_reservations") as mock_complete, \
              patch("services.reservation_service.ReservationService.reserve_stock") as mock_reserve, \
-             patch("services.billing_service._get_supabase") as mock_sb:
+             patch("services.billing_service._SUPABASE_CLIENT", MagicMock()):
 
-            mock_complete.return_value = {
-                "success": True, "completed_count": 1, "message": "ok"
+            mock_link.return_value = {
+                "success": True, "linked_count": 1, "message": "ok"
             }
-
-            # Simulate DB insert returning a bill row
-            mock_insert = MagicMock()
-            mock_insert.data = [{"bill_id": "bill-uuid-001"}]
-            mock_sb.return_value.table.return_value.insert.return_value.execute.return_value = mock_insert
 
             svc.create_bill({
                 "customer_id":    1,
@@ -693,6 +695,297 @@ class TestDoubleDeductionPrevention:
                 }],
             })
 
-        # complete must be called, reserve must NOT be called (no double deduction)
-        mock_complete.assert_called_once_with("DRAFT-001")
+        # link must be called with (draft id, bill number); reserve and
+        # complete must NOT be called (holds stay HELD, no deduction)
+        mock_link.assert_called_once()
+        assert mock_link.call_args[0][0] == "DRAFT-001"
+        assert isinstance(mock_link.call_args[0][1], str)  # bill number
+        mock_complete.assert_not_called()
         mock_reserve.assert_not_called()
+
+    def test_create_bill_without_draft_uses_hold_stock(self):
+        from services.billing_service import BillingService
+        svc = BillingService()
+
+        with patch("services.reservation_service.ReservationService.hold_stock") as mock_hold, \
+             patch("services.reservation_service.ReservationService.reserve_stock") as mock_reserve, \
+             patch("services.reservation_service.ReservationService.complete_bill_reservations") as mock_complete, \
+             patch("services.billing_service._SUPABASE_CLIENT", MagicMock()):
+
+            mock_hold.return_value = {"success": True, "message": "ok"}
+
+            svc.create_bill({
+                "customer_id":    1,
+                "customer_name":  "Test",
+                "payment_type":   "Cash",
+                "items": [{
+                    "product_id":   "prod-001",
+                    "product_name": "Rice",
+                    "unit":         "KG",
+                    "quantity":     5,
+                    "rate":         100,
+                    "discount_percent": 0,
+                }],
+            })
+
+        mock_hold.assert_called_once()
+        assert mock_hold.call_args[1]["product_id"] == "prod-001"
+        assert mock_hold.call_args[1]["quantity"] == 5.0
+        mock_reserve.assert_not_called()
+        mock_complete.assert_not_called()
+
+
+class TestHoldStock:
+    """Hold RPC wrappers (migration 0011) - holds never deduct current_stock."""
+
+    def test_hold_stock_calls_rpc(self):
+        svc = ReservationService()
+        with patch("services.reservation_service._get_supabase") as mock_sb:
+            mock_resp = MagicMock()
+            mock_resp.data = [{"success": True, "reservation_id": "r-1",
+                               "remaining_available": 5, "error_code": None}]
+            mock_sb.return_value.rpc.return_value.execute.return_value = mock_resp
+
+            result = svc.hold_stock("prod-001", "DRAFT-001", 7.0, "user-1")
+
+            mock_sb.return_value.rpc.assert_called_once_with("hold_stock", {
+                "p_product_id": "prod-001",
+                "p_bill_id":    "DRAFT-001",
+                "p_user_id":    "user-1",
+                "p_source_app": SOURCE_APP,
+                "p_quantity":   7.0,
+            })
+            assert result["success"] is True
+
+    def test_release_hold_calls_rpc(self):
+        svc = ReservationService()
+        with patch("services.reservation_service._get_supabase") as mock_sb:
+            mock_resp = MagicMock()
+            mock_resp.data = [{"success": True, "released_quantity": 3.0}]
+            mock_sb.return_value.rpc.return_value.execute.return_value = mock_resp
+
+            result = svc.release_hold("r-1")
+
+            mock_sb.return_value.rpc.assert_called_once_with("release_hold", {
+                "p_reservation_id": "r-1",
+                "p_source_app":     SOURCE_APP,
+            })
+            assert result["success"] is True
+
+    def test_cancel_hold_calls_rpc(self):
+        svc = ReservationService()
+        with patch("services.reservation_service._get_supabase") as mock_sb:
+            mock_resp = MagicMock()
+            mock_resp.data = [{"success": True, "cancelled_quantity": 2.0}]
+            mock_sb.return_value.rpc.return_value.execute.return_value = mock_resp
+
+            result = svc.cancel_hold("r-1")
+
+            mock_sb.return_value.rpc.assert_called_once_with("cancel_hold", {
+                "p_reservation_id": "r-1",
+                "p_source_app":     SOURCE_APP,
+            })
+            assert result["success"] is True
+
+    def test_update_hold_calls_rpc(self):
+        svc = ReservationService()
+        with patch("services.reservation_service._get_supabase") as mock_sb:
+            mock_resp = MagicMock()
+            mock_resp.data = [{"success": True, "new_quantity": 5.0}]
+            mock_sb.return_value.rpc.return_value.execute.return_value = mock_resp
+
+            result = svc.update_hold("r-1", 5.0)
+
+            mock_sb.return_value.rpc.assert_called_once_with("update_hold", {
+                "p_reservation_id": "r-1",
+                "p_new_quantity":   5.0,
+                "p_source_app":     SOURCE_APP,
+            })
+            assert result["success"] is True
+
+    def test_cancel_bill_holds_calls_rpc(self):
+        svc = ReservationService()
+        with patch("services.reservation_service._get_supabase") as mock_sb:
+            mock_resp = MagicMock()
+            mock_resp.data = [{"success": True, "cancelled_count": 2}]
+            mock_sb.return_value.rpc.return_value.execute.return_value = mock_resp
+
+            result = svc.cancel_bill_holds("DRAFT-001")
+
+            mock_sb.return_value.rpc.assert_called_once_with("cancel_bill_holds", {
+                "p_bill_id":    "DRAFT-001",
+                "p_source_app": SOURCE_APP,
+            })
+            assert result["success"] is True
+
+    def test_link_holds_to_bill_calls_rpc(self):
+        svc = ReservationService()
+        with patch("services.reservation_service._get_supabase") as mock_sb:
+            mock_resp = MagicMock()
+            mock_resp.data = [{"success": True, "linked_count": 1}]
+            mock_sb.return_value.rpc.return_value.execute.return_value = mock_resp
+
+            result = svc.link_holds_to_bill("DRAFT-001", "2026AUG13A10")
+
+            mock_sb.return_value.rpc.assert_called_once_with("link_holds_to_bill", {
+                "p_old_bill_id": "DRAFT-001",
+                "p_new_bill_id": "2026AUG13A10",
+                "p_source_app":  SOURCE_APP,
+            })
+            assert result["success"] is True
+
+    def test_expire_stale_holds_calls_rpc(self):
+        svc = ReservationService()
+        with patch("services.reservation_service._get_supabase") as mock_sb:
+            mock_resp = MagicMock()
+            mock_resp.data = [{"success": True, "expired_count": 0}]
+            mock_sb.return_value.rpc.return_value.execute.return_value = mock_resp
+
+            result = svc.expire_stale_holds(hours=2)
+
+            mock_sb.return_value.rpc.assert_called_once_with("expire_stale_holds", {
+                "p_hours":      2.0,
+                "p_source_app": SOURCE_APP,
+            })
+            assert result["success"] is True
+
+
+# ===========================================================================
+# 13. get_held_reservations – reserve table (grouped by bill, joins)
+# ===========================================================================
+
+class TestGetHeldReservations:
+    """TEST 13: Reserve-table query groups holds, joins products/company."""
+
+    def test_groups_holds_and_joins(self):
+        svc = ReservationService()
+
+        held = [
+            {"id": "h1", "product_id": "prod-001", "bill_id": "DRAFT-001",
+             "quantity": 7.0, "reserved_at": "2026-08-13T10:00:00"},
+            {"id": "h2", "product_id": "prod-002", "bill_id": "DRAFT-001",
+             "quantity": 2.0, "reserved_at": "2026-08-13T10:05:00"},
+            {"id": "h3", "product_id": "prod-001", "bill_id": "2026AUG13A10",
+             "quantity": 5.0, "reserved_at": "2026-08-13T10:10:00"},
+        ]
+        products = [
+            {"product_id": "prod-001", "product_name": "Rice",
+             "units": {"unit_name": "KG"}},
+            {"product_id": "prod-002", "product_name": "Oil",
+             "units": {"unit_name": "L"}},
+        ]
+        inventory = [
+            {"product_id": "prod-001", "current_stock": 50, "reserved_stock": 12},
+            {"product_id": "prod-002", "current_stock": 10, "reserved_stock": 2},
+        ]
+        company = [
+            {"invoice_no": "2026AUG13A10", "customer_name": "Kumar Stores",
+             "customer_phone": "9876543210", "payment_mode": "Cash",
+             "sales_type": "Retail", "through": "Counter", "area": "Anthiyur",
+             "total_amount": 500.0, "invoice_date": "2026-08-13",
+             "invoice_time": "10:10:00"},
+        ]
+
+        def fake_table(name):
+            t = MagicMock()
+            if name == "stock_reservations":
+                t.select.return_value.eq.return_value.eq.return_value.order.return_value.execute.return_value = \
+                    _ok_response(held)
+            elif name == "products":
+                t.select.return_value.in_.return_value.execute.return_value = _ok_response(products)
+            elif name == "inventory":
+                t.select.return_value.in_.return_value.execute.return_value = _ok_response(inventory)
+            elif name == "erp_billing_system_company":
+                t.select.return_value.in_.return_value.execute.return_value = _ok_response(company)
+            return t
+
+        mock_sb = MagicMock()
+        mock_sb.table.side_effect = fake_table
+
+        with patch("services.reservation_service._get_supabase", return_value=mock_sb):
+            result = svc.get_held_reservations()
+
+        assert result["success"] is True
+        assert result["count"] == 2
+
+        drafts = [g for g in result["data"] if g["bill_number"].startswith("DRAFT-")]
+        saved  = [g for g in result["data"] if not g["bill_number"].startswith("DRAFT-")]
+
+        assert len(drafts) == 1
+        assert drafts[0]["customer_name"] == ""  # drafts have no company row
+        assert {i["product_id"] for i in drafts[0]["items"]} == {"prod-001", "prod-002"}
+
+        assert len(saved) == 1
+        assert saved[0]["customer_name"] == "Kumar Stores"
+        assert saved[0]["total_amount"] == 500.0
+        assert saved[0]["items"][0]["name"] == "Rice"
+
+    def test_empty_holds(self):
+        svc = ReservationService()
+        mock_sb = MagicMock()
+        mock_sb.table.return_value.select.return_value.eq.return_value.eq.return_value.order.return_value.execute.return_value = \
+            _ok_response([])
+        with patch("services.reservation_service._get_supabase", return_value=mock_sb):
+            result = svc.get_held_reservations()
+        assert result["success"] is True
+        assert result["count"] == 0
+        assert result["data"] == []
+
+
+# ===========================================================================
+# 14. Hold API endpoints (migration 0011)
+# ===========================================================================
+
+class TestHoldAPI:
+    def test_hold_missing_product_id(self, client):
+        resp = client.post("/reservations/hold", json={
+            "bill_id": "DRAFT-001", "quantity": 7
+        })
+        assert resp.status_code == 400
+
+    def test_hold_missing_bill_id(self, client):
+        resp = client.post("/reservations/hold", json={
+            "product_id": "prod-001", "quantity": 7
+        })
+        assert resp.status_code == 400
+
+    def test_hold_zero_quantity(self, client):
+        resp = client.post("/reservations/hold", json={
+            "product_id": "prod-001", "bill_id": "DRAFT-001", "quantity": 0
+        })
+        assert resp.status_code == 400
+
+    def test_release_hold_missing_reservation_id(self, client):
+        resp = client.post("/reservations/release-hold", json={})
+        assert resp.status_code == 400
+
+    def test_cancel_hold_missing_reservation_id(self, client):
+        resp = client.post("/reservations/cancel-hold", json={})
+        assert resp.status_code == 400
+
+    def test_update_hold_missing_reservation_id(self, client):
+        resp = client.post("/reservations/update-hold", json={"new_quantity": 5})
+        assert resp.status_code == 400
+
+    def test_update_hold_zero_quantity(self, client):
+        resp = client.post("/reservations/update-hold", json={
+            "reservation_id": "h-1", "new_quantity": 0
+        })
+        assert resp.status_code == 400
+
+    def test_cancel_bill_holds_missing_bill_id(self, client):
+        resp = client.post("/reservations/cancel-bill-holds", json={})
+        assert resp.status_code == 400
+
+    def test_held_endpoint_shape(self, client):
+        with patch("services.reservation_service._get_supabase") as mock_get:
+            mock_sb = MagicMock()
+            mock_sb.table.return_value.select.return_value.eq.return_value.eq.return_value.order.return_value.execute.return_value = \
+                _ok_response([])
+            mock_get.return_value = mock_sb
+            resp = client.get("/reservations/held")
+        assert resp.status_code == 200
+        data = resp.json
+        assert data["success"] is True
+        assert data["count"] == 0
+        assert data["data"] == []

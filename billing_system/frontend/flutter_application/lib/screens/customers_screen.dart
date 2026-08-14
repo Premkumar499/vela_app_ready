@@ -130,8 +130,8 @@ class _CustomersScreenState extends State<CustomersScreen> {
             const SizedBox(height: 16),
             if (customer.phone.isNotEmpty)
               _DetailRow(Icons.phone, 'Phone', customer.phone),
-            if (customer.email != null && customer.email!.isNotEmpty)
-              _DetailRow(Icons.email_outlined, 'Email', customer.email!),
+            if (customer.email.isNotEmpty)
+              _DetailRow(Icons.email_outlined, 'Email', customer.email),
             if (customer.address.isNotEmpty)
               _DetailRow(Icons.location_on_outlined, 'Address', customer.address),
           ],

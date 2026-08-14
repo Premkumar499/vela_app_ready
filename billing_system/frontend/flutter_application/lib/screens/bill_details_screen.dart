@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../models/bill.dart';
+import '../models/invoice_model.dart';
 import '../services/api_service.dart';
 import '../utils/theme.dart';
 import '../widgets/bilingual_bill_dashboard.dart';
@@ -19,11 +20,21 @@ class _BillDetailsScreenState extends State<BillDetailsScreen> {
   Bill? _bill;
   bool _isLoading = true;
   String? _error;
+  bool _isCompanyBill = false;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final billNumber = ModalRoute.of(context)!.settings.arguments as String;
+    final args = ModalRoute.of(context)!.settings.arguments;
+    String billNumber = '';
+    bool isCompanyBill = false;
+    if (args is Map<String, dynamic>) {
+      billNumber = args['billNumber'] as String? ?? '';
+      isCompanyBill = args['isCompanyBill'] as bool? ?? false;
+    } else if (args is String) {
+      billNumber = args;
+    }
+    _isCompanyBill = isCompanyBill;
     _loadBill(billNumber);
   }
 
@@ -44,7 +55,8 @@ class _BillDetailsScreenState extends State<BillDetailsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_bill != null ? 'Bill – ${_bill!.billNumber}' : 'Bill Details'),
+        title: Text(
+            _bill != null ? 'Bill – ${_bill!.billNumber}' : 'Bill Details'),
         actions: [
           if (_bill != null)
             IconButton(
@@ -52,6 +64,15 @@ class _BillDetailsScreenState extends State<BillDetailsScreen> {
               tooltip: 'Print',
               onPressed: () {
                 final bill = _bill!;
+                if (_isCompanyBill) {
+                  Navigator.pushNamed(
+                    context,
+                    '/company_invoice',
+                    arguments: bill,
+                  );
+                  return;
+                }
+
                 String formattedDate = '';
                 String formattedTime = '';
                 try {
@@ -65,8 +86,8 @@ class _BillDetailsScreenState extends State<BillDetailsScreen> {
 
                 final receiptData = {
                   'company': {
-                    'name': 'VELA AGENCY',
-                    'address': 'Anthiyur',
+                    'name': Invoice.companyName,
+                    'address': Invoice.companyAddress,
                   },
                   'invoice': {
                     'bill_no': bill.billNumber,
@@ -77,16 +98,26 @@ class _BillDetailsScreenState extends State<BillDetailsScreen> {
                   'customer': {
                     'name': bill.customerName,
                   },
-                  'items': bill.items.map((item) => {
-                    'product_name': item.productName,
-                    'brand': '',
-                    'qty': item.quantity % 1 == 0 ? item.quantity.toInt() : item.quantity,
-                    'unit': item.unit,
-                    'rate': item.rate.toStringAsFixed(2),
-                    'amount': item.total.toStringAsFixed(2),
-                  }).toList(),
+                  'items': bill.items
+                      .map((item) => {
+                            'product_name': item.productName,
+                            'brand': '',
+                            'qty': item.quantity % 1 == 0
+                                ? item.quantity.toInt()
+                                : item.quantity,
+                            'unit': item.unit,
+                            'rate': item.rate.toStringAsFixed(2),
+                            'amount': item.total.toStringAsFixed(2),
+                          })
+                      .toList(),
                   'summary': {
-                    'total_qty': bill.items.fold<num>(0, (s, i) => s + (i.quantity % 1 == 0 ? i.quantity.toInt() : i.quantity)),
+                    'total_qty': bill.items.fold<num>(
+                        0,
+                        (s, i) =>
+                            s +
+                            (i.quantity % 1 == 0
+                                ? i.quantity.toInt()
+                                : i.quantity)),
                     'total': bill.grandTotal.toStringAsFixed(2),
                   },
                   'payment': {
@@ -99,15 +130,19 @@ class _BillDetailsScreenState extends State<BillDetailsScreen> {
                   barrierDismissible: false,
                   builder: (dialogCtx) => Dialog(
                     backgroundColor: const Color(0xFF0F172A),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                    insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16)),
+                    insetPadding: const EdgeInsets.symmetric(
+                        horizontal: 24, vertical: 24),
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(16),
                       child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 1100, maxHeight: 800),
+                        constraints: const BoxConstraints(
+                            maxWidth: 1100, maxHeight: 800),
                         child: BilingualBillDashboard(
                           receiptData: receiptData,
                           onClose: () => Navigator.of(dialogCtx).pop(),
+                          autoSave: false,
                         ),
                       ),
                     ),
@@ -165,8 +200,10 @@ class _BillDetailsScreenState extends State<BillDetailsScreen> {
                 _InfoField('Sales Type', bill.salesType),
                 _InfoField('Price List', bill.priceList),
                 if (bill.area.isNotEmpty) _InfoField('Area', bill.area),
-                if (bill.through.isNotEmpty) _InfoField('Through', bill.through),
-                if (bill.remarks.isNotEmpty) _InfoField('Remarks', bill.remarks),
+                if (bill.through.isNotEmpty)
+                  _InfoField('Through', bill.through),
+                if (bill.remarks.isNotEmpty)
+                  _InfoField('Remarks', bill.remarks),
               ],
             ),
           ),
@@ -175,9 +212,13 @@ class _BillDetailsScreenState extends State<BillDetailsScreen> {
           _SectionCard(
             title: 'Items (${bill.items.length})',
             icon: Icons.inventory_2_outlined,
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: DataTable(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(minWidth: constraints.maxWidth),
+                    child: DataTable(
                 headingRowHeight: 38,
                 dataRowMinHeight: 40,
                 dataRowMaxHeight: 40,
@@ -187,14 +228,22 @@ class _BillDetailsScreenState extends State<BillDetailsScreen> {
                   horizontalInside: BorderSide(color: AppTheme.divider),
                 ),
                 columns: const [
-                  DataColumn(label: Text('S.No', style: AppTheme.tableHeaderStyle)),
-                  DataColumn(label: Text('Item', style: AppTheme.tableHeaderStyle)),
-                  DataColumn(label: Text('Unit', style: AppTheme.tableHeaderStyle)),
-                  DataColumn(label: Text('Qty', style: AppTheme.tableHeaderStyle)),
-                  DataColumn(label: Text('Rate', style: AppTheme.tableHeaderStyle)),
-                  DataColumn(label: Text('GST%', style: AppTheme.tableHeaderStyle)),
-                  DataColumn(label: Text('GST Amt', style: AppTheme.tableHeaderStyle)),
-                  DataColumn(label: Text('Total', style: AppTheme.tableHeaderStyle)),
+                  DataColumn(
+                      label: Text('S.No', style: AppTheme.tableHeaderStyle)),
+                  DataColumn(
+                      label: Text('Item', style: AppTheme.tableHeaderStyle)),
+                  DataColumn(
+                      label: Text('Unit', style: AppTheme.tableHeaderStyle)),
+                  DataColumn(
+                      label: Text('Qty', style: AppTheme.tableHeaderStyle)),
+                  DataColumn(
+                      label: Text('Rate', style: AppTheme.tableHeaderStyle)),
+                  DataColumn(
+                      label: Text('GST%', style: AppTheme.tableHeaderStyle)),
+                  DataColumn(
+                      label: Text('GST Amt', style: AppTheme.tableHeaderStyle)),
+                  DataColumn(
+                      label: Text('Total', style: AppTheme.tableHeaderStyle)),
                 ],
                 rows: bill.items.asMap().entries.map((e) {
                   final i = e.key;
@@ -221,56 +270,70 @@ class _BillDetailsScreenState extends State<BillDetailsScreen> {
                 }).toList(),
               ),
             ),
-          ),
+            );
+          },
+        ),
+      ),
           const SizedBox(height: 16),
-          // Totals + GST breakup side by side
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Totals
-              Expanded(
-                child: _SectionCard(
-                  title: 'Summary',
-                  icon: Icons.calculate,
-                  child: Column(
-                    children: [
-                      _TotalRow('Subtotal', currency.format(bill.subtotal)),
-                      _TotalRow('Total GST', currency.format(bill.gstTotal),
-                          color: AppTheme.success),
-                      _TotalRow('Round Off',
-                          '${bill.roundOff >= 0 ? "+" : ""}${currency.format(bill.roundOff)}',
-                          color: AppTheme.textSecondary),
-                      const Divider(),
-                      _TotalRow(
-                        'Grand Total',
-                        currency.format(bill.grandTotal),
-                        isBold: true,
-                        color: AppTheme.primary,
-                        fontSize: 18,
-                      ),
-                    ],
-                  ),
+          // Totals + GST breakup: side-by-side on wide screens,
+          // stacked on narrow/mobile screens.
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final summaryCard = _SectionCard(
+                title: 'Summary',
+                icon: Icons.calculate,
+                child: Column(
+                  children: [
+                    _TotalRow('Subtotal', currency.format(bill.subtotal)),
+                    _TotalRow('Total GST', currency.format(bill.gstTotal),
+                        color: AppTheme.success),
+                    _TotalRow('Round Off',
+                        '${bill.roundOff >= 0 ? "+" : ""}${currency.format(bill.roundOff)}',
+                        color: AppTheme.textSecondary),
+                    const Divider(),
+                    _TotalRow(
+                      'Grand Total',
+                      currency.format(bill.grandTotal),
+                      isBold: true,
+                      color: AppTheme.primary,
+                      fontSize: 18,
+                    ),
+                  ],
                 ),
-              ),
-              const SizedBox(width: 12),
-              // GST breakup
-              Expanded(
-                child: _SectionCard(
-                  title: 'GST Breakup',
-                  icon: Icons.account_balance,
-                  child: Column(
-                    children: [
-                      ...bill.gstBreakup.entries.map(
-                        (e) => _TotalRow(e.key, currency.format(e.value)),
-                      ),
-                      const Divider(),
-                      _TotalRow('Total', currency.format(bill.gstTotal),
-                          isBold: true, color: AppTheme.success),
-                    ],
-                  ),
+              );
+              final gstCard = _SectionCard(
+                title: 'GST Breakup',
+                icon: Icons.account_balance,
+                child: Column(
+                  children: [
+                    ...bill.gstBreakup.entries.map(
+                      (e) => _TotalRow(e.key, currency.format(e.value)),
+                    ),
+                    const Divider(),
+                    _TotalRow('Total', currency.format(bill.gstTotal),
+                        isBold: true, color: AppTheme.success),
+                  ],
                 ),
-              ),
-            ],
+              );
+              if (constraints.maxWidth < 640) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    summaryCard,
+                    const SizedBox(height: 12),
+                    gstCard,
+                  ],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: summaryCard),
+                  const SizedBox(width: 12),
+                  Expanded(child: gstCard),
+                ],
+              );
+            },
           ),
         ],
       ),

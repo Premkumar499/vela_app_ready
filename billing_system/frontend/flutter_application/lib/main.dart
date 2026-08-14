@@ -15,7 +15,11 @@ import 'screens/products_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/splash_screen.dart';
+import 'screens/stock_out_screen.dart';
 import 'screens/consolidated_invoice_screen.dart';
+import 'screens/admin_dashboard_screen.dart';
+import 'screens/admin_products_screen.dart';
+import 'screens/admin_customers_screen.dart';
 import 'utils/constants.dart';
 import 'utils/theme.dart';
 
@@ -65,12 +69,18 @@ class BillingApp extends StatelessWidget {
           AppConstants.routeSplash: (_) => const SplashScreen(),
           AppConstants.routeLogin: (_) => const LoginScreen(),
           AppConstants.routeDashboard: (_) => const DashboardScreen(),
+          AppConstants.routeAdminDashboard: (_) =>
+              const AdminDashboardScreen(),
+          AppConstants.routeAdminProducts: (_) => const AdminProductsScreen(),
+          AppConstants.routeAdminCustomers: (_) =>
+              const AdminCustomersScreen(),
           AppConstants.routeBilling: (_) => const PosBillingScreen(),
           AppConstants.routeProducts: (_) => const ProductsScreen(),
           AppConstants.routeCustomers: (_) => const CustomersScreen(),
           AppConstants.routeHistory: (_) => const BillHistoryScreen(),
           AppConstants.routeOrders: (_) => const OrdersScreen(),
           AppConstants.routeSettings: (_) => const SettingsScreen(),
+          AppConstants.routeStockOut: (_) => const StockOutScreen(),
           '/consolidated-invoice': (_) => const ConsolidatedInvoiceScreen(),
         },
 

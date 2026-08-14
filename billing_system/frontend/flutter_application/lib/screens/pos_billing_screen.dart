@@ -5,14 +5,13 @@ import '../models/customer.dart';
 import '../models/product.dart';
 import '../providers/billing_provider.dart';
 import '../services/api_service.dart';
-import '../services/invoice_export_service.dart';
-import '../utils/constants.dart';
 import '../utils/pos_theme.dart';
 import '../widgets/pos_bill_item_row.dart';
 import '../widgets/pos_payment_selector.dart';
 import '../widgets/pos_product_card.dart';
 import '../widgets/pos_summary_section.dart';
 import '../widgets/bilingual_bill_dashboard.dart';
+import '../models/invoice_model.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MAIN SCREEN
@@ -31,6 +30,7 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
   List<String>  _categories     = ['All'];
   String        _selectedCat    = 'All';
   bool          _loadingProds   = true;
+  int           _productsToShow = 100;
 
   // ── Search ───────────────────────────────────────────────────────────────
   final TextEditingController _searchCtrl = TextEditingController();
@@ -58,8 +58,8 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
   // ─── Data loading ──────────────────────────────────────────────────────────
   Future<void> _loadProducts() async {
     setState(() => _loadingProds = true);
-    // Housekeeping: expire stale reservations so abandoned draft stock is freed
-    ApiService.expireStaleReservations();
+    // Housekeeping: expire stale draft holds so abandoned draft stock is freed
+    ApiService.expireStaleHolds();
     final result = await ApiService.getProducts();
     if (!mounted) return;
     if (result.success && result.data != null) {
@@ -69,6 +69,7 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
           .where((c) => c != 'Function Bill Products')
           .toSet().toList()..sort();
       _categories  = ['All', ...cats];
+      _productsToShow = 100;
     }
     setState(() => _loadingProds = false);
   }
@@ -77,6 +78,7 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
     final q   = _searchCtrl.text.trim().toLowerCase();
     final cat = _selectedCat;
     setState(() {
+      _productsToShow = 100;
       _filtered = _allProducts.where((p) {
         if (p.category == 'Function Bill Products') return false;
         final matchCat  = cat == 'All' || p.category == cat;
@@ -98,6 +100,11 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
     final prov = context.read<BillingProvider>();
     if (!prov.canSave) {
       _snack('Add at least one item to save.', error: true);
+      return;
+    }
+    if (prov.customer.id == '00000000-0000-0000-0000-000000000000' ||
+        prov.customer.name == 'Walk-in Customer') {
+      _snack('Please select a customer or add a new customer first / தயவுசெய்து வாடிக்கையாளரைத் தேர்ந்தெடுக்கவும் அல்லது புதிய வாடிக்கையாளரைச் சேர்க்கவும்.', error: true);
       return;
     }
     setState(() => _isSaving = true);
@@ -124,8 +131,8 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
       final now = DateTime.now();
       final receiptData = {
         'company': {
-          'name':    'VELA AGENCY',
-          'address': 'Anthiyur',
+          'name':    Invoice.companyName,
+          'address': Invoice.companyAddress,
         },
         'invoice': {
           'bill_no':      billNum,
@@ -286,51 +293,74 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
           const SizedBox(width: 8),
         ],
       ),
-      // ── Body: side-by-side ───────────────────────────────────────────────
-      body: Row(
-        children: [
-          // ── LEFT PANEL (65%) ────────────────────────────────────────────
-          Expanded(
-            flex: 65,
-            child: _LeftPanel(
-              categories:   _categories,
-              selectedCat:  _selectedCat,
-              products:     _filtered,
-              loading:      _loadingProds,
-              searchCtrl:   _searchCtrl,
-              searchFocus:  _searchFocus,
-              onCategory:   _selectCategory,
-              onProduct:    (p) async {
-                final result = await provider.addProductWithReservation(p);
-                if (!mounted) return;
-                if (!result.success) {
-                  final available = result.remainingAvailable;
-                  final msg = available > 0
-                      ? 'Only ${available.toStringAsFixed(available.truncateToDouble() == available ? 0 : 1)} units are currently available'
-                      : '${p.name} is out of stock';
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(msg),
-                      backgroundColor: PosTheme.danger,
-                      duration: const Duration(seconds: 3),
-                    ),
-                  );
-                }
-              },
-            ),
-          ),
-          // ── RIGHT PANEL (35%) ───────────────────────────────────────────
-          Expanded(
-            flex: 35,
-            child: _RightPanel(
-              provider:   provider,
-              invoiceNum: _invoiceNum,
-              isSaving:   _isSaving,
-              onSave:     _saveBill,
-              onCancel:   _cancelBill,
-            ),
-          ),
-        ],
+      // ── Body: responsive layout ──────────────────────────────────────────
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final isWide = constraints.maxWidth >= 1000;
+          final leftContent = _LeftPanel(
+            categories:   _categories,
+            selectedCat:  _selectedCat,
+            products:     _filtered.take(_productsToShow).toList(),
+            loading:      _loadingProds,
+            searchCtrl:   _searchCtrl,
+            searchFocus:  _searchFocus,
+            onCategory:   _selectCategory,
+            hasMore:      _productsToShow < _filtered.length,
+            onLoadMore:   () {
+              setState(() => _productsToShow += 100);
+            },
+            onProduct:    (p) async {
+              final result = await provider.addProductWithReservation(p);
+              if (!context.mounted) return;
+              if (!result.success) {
+                final available = result.remainingAvailable;
+                final msg = available > 0
+                    ? 'Only ${available.toStringAsFixed(available.truncateToDouble() == available ? 0 : 1)} units are currently available'
+                    : '${p.name} is out of stock';
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(msg),
+                    backgroundColor: PosTheme.danger,
+                    duration: const Duration(seconds: 3),
+                  ),
+                );
+              }
+            },
+          );
+          final rightContent = _RightPanel(
+            provider:   provider,
+            invoiceNum: _invoiceNum,
+            isSaving:   _isSaving,
+            onSave:     _saveBill,
+            onCancel:   _cancelBill,
+            scrollable: !isWide,
+          );
+          if (isWide) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(flex: 65, child: leftContent),
+                Expanded(flex: 35, child: rightContent),
+              ],
+            );
+          }
+          // Mobile / narrow: stack vertically with scrollable layout
+          return Column(
+            children: [
+              // Product selection takes the top portion
+              Expanded(
+                flex: 52,
+                child: leftContent,
+              ),
+              Divider(height: 1, color: PosTheme.border),
+              // Bill panel below
+              Expanded(
+                flex: 48,
+                child: rightContent,
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -348,6 +378,8 @@ class _LeftPanel extends StatelessWidget {
   final FocusNode             searchFocus;
   final ValueChanged<String>  onCategory;
   final ValueChanged<Product> onProduct;
+  final bool                  hasMore;
+  final VoidCallback          onLoadMore;
 
   const _LeftPanel({
     required this.categories,
@@ -358,6 +390,8 @@ class _LeftPanel extends StatelessWidget {
     required this.searchFocus,
     required this.onCategory,
     required this.onProduct,
+    required this.hasMore,
+    required this.onLoadMore,
   });
 
   @override
@@ -373,7 +407,11 @@ class _LeftPanel extends StatelessWidget {
           ),
           child: _SearchBar(controller: searchCtrl, focusNode: searchFocus),
         ),
-        // ── Category chips removed ────────────────────────────────────
+        _CategoryChips(
+          categories: categories,
+          selected: selectedCat,
+          onSelected: onCategory,
+        ),
         const Divider(height: 1, color: PosTheme.border),
         // ── Product grid ───────────────────────────────────────────────
         Expanded(
@@ -381,7 +419,12 @@ class _LeftPanel extends StatelessWidget {
               ? const Center(child: CircularProgressIndicator())
               : products.isEmpty
                   ? _EmptyProducts(hasSearch: searchCtrl.text.isNotEmpty)
-                  : _ProductGrid(products: products, onTap: onProduct),
+                  : _ProductGrid(
+                      products: products,
+                      onTap: onProduct,
+                      hasMore: hasMore,
+                      onLoadMore: onLoadMore,
+                    ),
         ),
       ],
     );
@@ -433,8 +476,10 @@ class _CategoryChips extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 36,
+    return Container(
+      height: 48,
+      color: PosTheme.surface,
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: PosTheme.padLg),
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: categories.length,
@@ -442,24 +487,40 @@ class _CategoryChips extends StatelessWidget {
         itemBuilder: (_, i) {
           final cat    = categories[i];
           final active = cat == selected;
-          return AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            child: ChoiceChip(
-              label: Text(cat),
-              selected: active,
-              onSelected: (_) => onSelected(cat),
-              selectedColor: PosTheme.primary,
-              backgroundColor: PosTheme.surface,
-              labelStyle: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: active ? Colors.white : PosTheme.textSecondary,
+          return InkWell(
+            onTap: () => onSelected(cat),
+            borderRadius: BorderRadius.circular(PosTheme.radiusSm),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              decoration: BoxDecoration(
+                color: active ? PosTheme.primary : PosTheme.surface,
+                borderRadius: BorderRadius.circular(PosTheme.radiusSm),
+                border: Border.all(
+                  color: active ? PosTheme.primary : const Color(0xFFCDD3DC),
+                  width: 1.2,
+                ),
               ),
-              side: BorderSide(
-                color: active ? PosTheme.primary : PosTheme.border,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (active) ...[
+                    const Icon(
+                      Icons.check,
+                      color: Color(0xFF1B5E20),
+                      size: 16,
+                    ),
+                    const SizedBox(width: 6),
+                  ],
+                  Text(
+                    cat,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: active ? FontWeight.bold : FontWeight.w600,
+                      color: active ? Colors.white : PosTheme.textSecondary,
+                    ),
+                  ),
+                ],
               ),
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              visualDensity: VisualDensity.compact,
             ),
           );
         },
@@ -469,11 +530,26 @@ class _CategoryChips extends StatelessWidget {
 }
 
 // ─── Product grid ──────────────────────────────────────────────────────────────
-class _ProductGrid extends StatelessWidget {
+class _ProductGrid extends StatefulWidget {
   final List<Product>         products;
   final ValueChanged<Product> onTap;
+  final bool                  hasMore;
+  final VoidCallback          onLoadMore;
 
-  const _ProductGrid({required this.products, required this.onTap});
+  const _ProductGrid({
+    required this.products,
+    required this.onTap,
+    required this.hasMore,
+    required this.onLoadMore,
+  });
+
+  @override
+  State<_ProductGrid> createState() => _ProductGridState();
+}
+
+class _ProductGridState extends State<_ProductGrid> {
+  late ScrollController _scrollController;
+  bool _isLoadingMore = false;
 
   // Each card is exactly this tall — hard pixel cap, no aspect ratio math.
   static const double _cardH = 110.0;
@@ -481,43 +557,112 @@ class _ProductGrid extends StatelessWidget {
   static const double _pad   = 12.0;
 
   @override
-  Widget build(BuildContext context) {
-    final availW = MediaQuery.of(context).size.width * 0.65 - _pad * 2;
-    final cols   = availW < 380 ? 1 : availW < 580 ? 2 : availW < 820 ? 3 : 4;
-    final colW   = (availW - _gap * (cols - 1)) / cols;
+  void initState() {
+    super.initState();
+    _scrollController = ScrollController()..addListener(_onScroll);
+  }
 
-    // Build rows of [cols] items each
-    final rows = <List<Product>>[];
-    for (var i = 0; i < products.length; i += cols) {
-      rows.add(products.sublist(i, (i + cols).clamp(0, products.length)));
+  @override
+  void dispose() {
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (!widget.hasMore || _isLoadingMore) return;
+    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
+      setState(() {
+        _isLoadingMore = true;
+      });
+      // Simulate a small premium loading delay (e.g. 500ms) for UI feedback
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted) {
+          widget.onLoadMore();
+          setState(() {
+            _isLoadingMore = false;
+          });
+        }
+      });
     }
+  }
 
-    return ListView.builder(
-      padding: const EdgeInsets.all(_pad),
-      itemCount: rows.length,
-      itemBuilder: (_, rowIdx) {
-        final row = rows[rowIdx];
-        return Padding(
-          padding: EdgeInsets.only(bottom: rowIdx < rows.length - 1 ? _gap : 0),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              for (var ci = 0; ci < cols; ci++) ...[
-                if (ci < row.length)
-                  SizedBox(
-                    width: colW,
-                    height: _cardH,
-                    child: PosProductCard(
-                      product: row[ci],
-                      onTap:   () => onTap(row[ci]),
-                    ),
-                  )
-                else
-                  SizedBox(width: colW, height: _cardH), // empty filler
-                if (ci < cols - 1) const SizedBox(width: _gap),
-              ],
-            ],
-          ),
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final availW = constraints.maxWidth - _pad * 2;
+        final cols   = availW < 380 ? 1 : availW < 580 ? 2 : availW < 820 ? 3 : 4;
+        final colW   = (availW - _gap * (cols - 1)) / cols;
+
+        // Build rows of [cols] items each
+        final rows = <List<Product>>[];
+        for (var i = 0; i < widget.products.length; i += cols) {
+          rows.add(widget.products.sublist(i, (i + cols).clamp(0, widget.products.length)));
+        }
+
+        final itemCount = rows.length + (widget.hasMore ? 1 : 0);
+
+        return ListView.builder(
+          controller: _scrollController,
+          padding: const EdgeInsets.all(_pad),
+          itemCount: itemCount,
+          itemBuilder: (_, rowIdx) {
+            if (rowIdx == rows.length) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: Center(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: PosTheme.primary,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        'Loading more products...',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: PosTheme.textSecondary,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }
+
+            final row = rows[rowIdx];
+            return Padding(
+              padding: EdgeInsets.only(
+                  bottom: rowIdx < rows.length - 1 || widget.hasMore ? _gap : 0),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (var ci = 0; ci < cols; ci++) ...[
+                    if (ci < row.length)
+                      SizedBox(
+                        width: colW,
+                        height: _cardH,
+                        child: PosProductCard(
+                          product: row[ci],
+                          onTap:   () => widget.onTap(row[ci]),
+                        ),
+                      )
+                    else
+                      SizedBox(width: colW, height: _cardH), // empty filler
+                    if (ci < cols - 1) const SizedBox(width: _gap),
+                  ],
+                ],
+              ),
+            );
+          },
         );
       },
     );
@@ -559,107 +704,138 @@ class _RightPanel extends StatelessWidget {
   final Future<void> Function() onSave;
   final VoidCallback onCancel;
 
+  /// On narrow screens the panel is squeezed into a fraction of the screen
+  /// height, so the whole panel scrolls instead of overflowing.
+  final bool scrollable;
+
   const _RightPanel({
     required this.provider,
     required this.invoiceNum,
     required this.isSaving,
     required this.onSave,
     required this.onCancel,
+    this.scrollable = false,
   });
 
   @override
   Widget build(BuildContext context) {
+    // ── Bill items list ────────────────────────────────────────────────
+    final itemsList = provider.items.isEmpty
+        ? const PosEmptyCartPlaceholder()
+        : ListView.builder(
+            padding: EdgeInsets.zero,
+            shrinkWrap: scrollable,
+            physics: scrollable
+                ? const NeverScrollableScrollPhysics()
+                : null,
+            itemCount: provider.items.length,
+            itemBuilder: (ctx, i) {
+              final item = provider.items[i];
+              // We need the Product to call reservation-aware methods.
+              // Build a lightweight proxy Product from the BillItem.
+              final proxyProduct = Product(
+                id:       item.productId,
+                name:     item.productName,
+                unit:     item.unit,
+                price:    item.rate,
+                mrp:      item.rate,
+                stock:    item.maxStock,
+                category: '',
+              );
+              return PosBillItemRow(
+                index: i,
+                item:  item,
+                onIncrease: () async {
+                  final result =
+                      await provider.addProductWithReservation(
+                          proxyProduct, quantity: 1);
+                  if (!result.success && ctx.mounted) {
+                    final avail = result.remainingAvailable;
+                    final msg = avail > 0
+                        ? 'Only ${avail.toStringAsFixed(0)} units available'
+                        : '${item.productName} is out of stock';
+                    ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                      content: Text(msg),
+                      backgroundColor: PosTheme.danger,
+                      duration: const Duration(seconds: 3),
+                    ));
+                  }
+                },
+                onDecrease: () async {
+                  if (item.quantity > 1) {
+                    await provider.updateQuantityWithReservation(
+                        i, item.quantity - 1, proxyProduct);
+                  } else {
+                    await provider.removeItemWithRelease(i);
+                  }
+                },
+                onDelete: () => provider.removeItemWithRelease(i),
+              );
+            },
+          );
+
+    final panel = Column(
+      children: [
+        // ── Bill header ─────────────────────────────────────────────
+        _BillHeader(
+          invoiceNum:  invoiceNum,
+          customerName: provider.customer.name,
+          itemCount:   provider.itemCount,
+          paymentType: provider.paymentType,
+        ),
+        // ── Customer details input ─────────────────────────────────
+        _CustomerDetailsInput(provider: provider),
+        // ── Column labels ──────────────────────────────────────────
+        _BillTableHeader(),
+        // ── Bill items list ────────────────────────────────────────
+        if (scrollable)
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 260),
+            child: itemsList,
+          )
+        else
+          Expanded(child: itemsList),
+        // ── Summary ────────────────────────────────────────────────
+        PosSummarySection(
+          subtotal:   provider.subtotal,
+          grandTotal: provider.grandTotal,
+        ),
+        // ── Payment selector ───────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.only(
+            top: PosTheme.padSm,
+            bottom: PosTheme.padSm,
+          ),
+          child: PosPaymentSelector(
+            selected:  provider.paymentType,
+            onChanged: provider.setPaymentType,
+          ),
+        ),
+        // ── Action buttons ─────────────────────────────────────────
+        _ActionButtons(
+          isSaving:  isSaving,
+          canSave:   provider.canSave,
+          onComplete: onSave,
+          onCancel:  onCancel,
+        ),
+      ],
+    );
+
+    if (!scrollable) {
+      return Container(decoration: PosTheme.rightPanel, child: panel);
+    }
+
+    // Narrow screens: the whole panel scrolls so it never overflows the
+    // reduced height. The items list stays open inside (bounded height).
     return Container(
       decoration: PosTheme.rightPanel,
-      child: Column(
-        children: [
-          // ── Bill header ─────────────────────────────────────────────
-          _BillHeader(
-            invoiceNum:  invoiceNum,
-            customerName: provider.customer.name,
-            itemCount:   provider.itemCount,
-            paymentType: provider.paymentType,
-          ),
-          // ── Customer details input ─────────────────────────────────
-          _CustomerDetailsInput(provider: provider),
-          // ── Column labels ──────────────────────────────────────────
-          _BillTableHeader(),
-          // ── Bill items list ────────────────────────────────────────
-          Expanded(
-            child: provider.items.isEmpty
-                ? const PosEmptyCartPlaceholder()
-                : ListView.builder(
-                    padding: EdgeInsets.zero,
-                    itemCount: provider.items.length,
-                    itemBuilder: (ctx, i) {
-                      final item = provider.items[i];
-                      // We need the Product to call reservation-aware methods.
-                      // Build a lightweight proxy Product from the BillItem.
-                      final proxyProduct = Product(
-                        id:       item.productId,
-                        name:     item.productName,
-                        unit:     item.unit,
-                        price:    item.rate,
-                        mrp:      item.rate,
-                        stock:    item.maxStock,
-                        category: '',
-                      );
-                      return PosBillItemRow(
-                        index: i,
-                        item:  item,
-                        onIncrease: () async {
-                          final result =
-                              await provider.addProductWithReservation(
-                                  proxyProduct, quantity: 1);
-                          if (!result.success && ctx.mounted) {
-                            final avail = result.remainingAvailable;
-                            final msg = avail > 0
-                                ? 'Only ${avail.toStringAsFixed(0)} units available'
-                                : '${item.productName} is out of stock';
-                            ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-                              content: Text(msg),
-                              backgroundColor: PosTheme.danger,
-                              duration: const Duration(seconds: 3),
-                            ));
-                          }
-                        },
-                        onDecrease: () async {
-                          if (item.quantity > 1) {
-                            await provider.updateQuantityWithReservation(
-                                i, item.quantity - 1, proxyProduct);
-                          } else {
-                            await provider.removeItemWithRelease(i);
-                          }
-                        },
-                        onDelete: () => provider.removeItemWithRelease(i),
-                      );
-                    },
-                  ),
-          ),
-          // ── Summary ────────────────────────────────────────────────
-          PosSummarySection(
-            subtotal:   provider.subtotal,
-            grandTotal: provider.grandTotal,
-          ),
-          // ── Payment selector ───────────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.only(
-              top: PosTheme.padSm,
-              bottom: PosTheme.padSm,
-            ),
-            child: PosPaymentSelector(
-              selected:  provider.paymentType,
-              onChanged: provider.setPaymentType,
-            ),
-          ),
-          // ── Action buttons ─────────────────────────────────────────
-          _ActionButtons(
-            isSaving:  isSaving,
-            canSave:   provider.canSave,
-            onComplete: onSave,
-            onCancel:  onCancel,
-          ),
-        ],
+      child: SingleChildScrollView(
+        child: Column(
+          children: [
+            panel,
+            const SizedBox(height: 8),
+          ],
+        ),
       ),
     );
   }
@@ -986,6 +1162,7 @@ class _CustomerDetailsInputState extends State<_CustomerDetailsInput> {
     final selected = await showModalBottomSheet<Customer>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (_) => const _CustomerPickerSheet(),
     );
@@ -1004,15 +1181,6 @@ class _CustomerDetailsInputState extends State<_CustomerDetailsInput> {
     });
     widget.provider.setCustomer(selected);
     widget.provider.setCustomerPhone(selected.phone);
-  }
-
-  void _onNameChanged(String value) {
-    final c = widget.provider.customer;
-    widget.provider.setCustomer(Customer(
-      id: c.id, name: value.isEmpty ? 'Walk-in Customer' : value,
-      phone: c.phone, address: c.address, area: c.area,
-      gstin: c.gstin, creditLimit: c.creditLimit, balance: c.balance,
-    ));
   }
 
   @override
@@ -1189,7 +1357,10 @@ class _CustomerPickerSheetState extends State<_CustomerPickerSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final maxH = MediaQuery.of(context).size.height * 0.75;
+    final screenH = MediaQuery.of(context).size.height;
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    // Reserve space for keyboard; never overflow the screen
+    final maxH = (screenH * 0.75 - bottomInset).clamp(300.0, screenH * 0.85);
     return Container(
       height: maxH,
       decoration: const BoxDecoration(

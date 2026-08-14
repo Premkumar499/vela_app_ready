@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../services/session_service.dart';
 import '../utils/theme.dart';
-import '../utils/constants.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -12,7 +12,7 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final _controller = TextEditingController();
-  bool _obscure = true;
+  bool _remember = true;
   bool _loading = false;
   String? _error;
 
@@ -31,10 +31,12 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _loading = false);
 
     if (result.success) {
-      // Navigate and pass user info to dashboard
+      await SessionService.saveSession(result.data ?? {}, remember: _remember);
+      if (!mounted) return;
+      // Admin (role_id 1) → Admin Panel; Billing Employee (role_id 3) → Biller dashboard.
       Navigator.pushReplacementNamed(
         context,
-        AppConstants.routeDashboard,
+        SessionService.homeRouteOf(result.data),
         arguments: result.data,
       );
     } else {
@@ -106,7 +108,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           const SizedBox(height: 28),
                           TextField(
                             controller: _controller,
-                            obscureText: _obscure,
+                            obscureText: false,
                             keyboardType: TextInputType.phone,
                             onSubmitted: (_) => _login(),
                             style: const TextStyle(fontSize: 15),
@@ -114,14 +116,6 @@ class _LoginScreenState extends State<LoginScreen> {
                               labelText: 'Mobile Number',
                               prefixIcon: const Icon(Icons.phone_android_rounded,
                                   color: AppTheme.primary),
-                              suffixIcon: IconButton(
-                                icon: Icon(
-                                  _obscure ? Icons.visibility_off_outlined
-                                           : Icons.visibility_outlined,
-                                  color: AppTheme.textSecondary,
-                                ),
-                                onPressed: () => setState(() => _obscure = !_obscure),
-                              ),
                               errorText: _error,
                               filled: true,
                               fillColor: const Color(0xFFF7F7F7),
@@ -144,7 +138,24 @@ class _LoginScreenState extends State<LoginScreen> {
                                   horizontal: 16, vertical: 16),
                             ),
                           ),
-                          const SizedBox(height: 24),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Checkbox(
+                                value: _remember,
+                                activeColor: AppTheme.primary,
+                                onChanged: (v) =>
+                                    setState(() => _remember = v ?? false),
+                              ),
+                              const Expanded(
+                                child: Text('Remember me (stay logged in)',
+                                    style: TextStyle(
+                                        fontSize: 13,
+                                        color: AppTheme.textSecondary)),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
                           SizedBox(
                             width: double.infinity,
                             height: 50,

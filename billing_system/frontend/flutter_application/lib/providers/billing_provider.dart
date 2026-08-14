@@ -107,8 +107,9 @@ class BillingProvider with ChangeNotifier {
   /// The product is only added to the bill if the database reservation succeeds.
   ///
   /// For an existing item in the bill (quantity increase), uses the atomic
-  /// update_reservation RPC so there is no race-condition window where the
+  /// update_hold RPC so there is no race-condition window where the
   /// freed stock could be grabbed by the GST ERP between release and re-reserve.
+  /// Holds do NOT deduct current_stock — they only earmark reserved_stock.
   Future<ReservationResult> addProductWithReservation(
     Product product, {
     double quantity = 1,
@@ -125,16 +126,16 @@ class BillingProvider with ChangeNotifier {
 
       if (priorReservationId != null) {
         // Atomic delta — no race window
-        final result = await ApiService.updateReservation(
+        final result = await ApiService.updateHold(
           reservationId: priorReservationId,
           newQuantity:   newTotalQty,
         );
 
         if (!result.success) {
           final errorCode = result.data?['error_code'] as String?;
-          // RPC_NOT_DEPLOYED: fall back to reserve_stock upsert
+          // RPC_NOT_DEPLOYED: fall back to hold_stock upsert
           if (errorCode == 'RPC_NOT_DEPLOYED') {
-            final fallback = await ApiService.reserveStock(
+            final fallback = await ApiService.holdStock(
               productId:   product.id,
               draftBillId: _draftBillId,
               quantity:    newTotalQty,
@@ -186,8 +187,8 @@ class BillingProvider with ChangeNotifier {
       }
     }
 
-    // Call the database reservation RPC
-    final result = await ApiService.reserveStock(
+    // Call the database hold RPC (does not deduct current_stock)
+    final result = await ApiService.holdStock(
       productId:    product.id,
       draftBillId:  _draftBillId,
       quantity:     newTotalQty,
@@ -236,9 +237,9 @@ class BillingProvider with ChangeNotifier {
     }
   }
 
-  /// Update quantity — uses the atomic update_reservation RPC to adjust the
-  /// existing reservation by the delta, with no race-condition window.
-  /// Falls back to release+re-reserve if no existing reservation ID is known.
+  /// Update quantity — uses the atomic update_hold RPC to adjust the
+  /// existing hold by the delta, with no race-condition window.
+  /// Falls back to release+re-hold if no existing reservation ID is known.
   Future<ReservationResult> updateQuantityWithReservation(
     int index,
     double newQuantity,
@@ -256,17 +257,17 @@ class BillingProvider with ChangeNotifier {
 
     // ── Fast path: atomic delta update (no race window) ─────────────
     if (existingReservationId != null) {
-      final result = await ApiService.updateReservation(
+      final result = await ApiService.updateHold(
         reservationId: existingReservationId,
         newQuantity:   newQuantity,
       );
 
       if (!result.success) {
         final errorCode = result.data?['error_code'] as String?;
-        // RPC_NOT_DEPLOYED: migration 0006 pending — fall back to reserve_stock
+        // RPC_NOT_DEPLOYED: migration 0011 pending — fall back to hold_stock
         // upsert which the live DB handles atomically for same bill+product.
         if (errorCode == 'RPC_NOT_DEPLOYED') {
-          final fallback = await ApiService.reserveStock(
+          final fallback = await ApiService.holdStock(
             productId:   product.id,
             draftBillId: _draftBillId,
             quantity:    newQuantity,
@@ -302,14 +303,14 @@ class BillingProvider with ChangeNotifier {
       return const ReservationResult(success: true, message: 'Updated');
     }
 
-    // ── Slow path: no prior reservation ID — release + full re-reserve
+    // ── Slow path: no prior reservation ID — release + full re-hold
     // (Handles edge case where provider was recreated / reservation ID lost)
     final oldReservationId = _reservationIds.remove(product.id);
     if (oldReservationId != null) {
       await _releaseSingleReservation(oldReservationId);
     }
 
-    final result = await ApiService.reserveStock(
+    final result = await ApiService.holdStock(
       productId:   product.id,
       draftBillId: _draftBillId,
       quantity:    newQuantity,
@@ -372,12 +373,13 @@ class BillingProvider with ChangeNotifier {
 
   void clearItems() { _items.clear(); notifyListeners(); }
 
-  /// Cancel all reservations for this draft and reset the bill.
+  /// Cancel all holds for this draft and reset the bill.
   Future<void> cancelBillWithRelease() async {
-    // Release all stock reservations atomically on the backend
+    // Cancel all stock holds atomically on the backend (no stock restore -
+    // holds never deducted current_stock)
     if (_reservationIds.isNotEmpty) {
       try {
-        await ApiService.releaseBillReservations(_draftBillId);
+        await ApiService.cancelBillHolds(_draftBillId);
       } catch (_) {}
     }
     // Mark the bill_drafts row as CANCELLED
@@ -388,9 +390,11 @@ class BillingProvider with ChangeNotifier {
   }
 
   void resetBill() {
-    // Fire-and-forget release of any remaining reservations
+    // Fire-and-forget cancel of any remaining holds.
+    // After a successful save this is a harmless no-op: the holds were
+    // already relinked to the real bill number by the backend.
     if (_reservationIds.isNotEmpty) {
-      ApiService.releaseBillReservations(_draftBillId);
+      ApiService.cancelBillHolds(_draftBillId);
     }
     if (_draftCreated) {
       ApiService.cancelDraft(_draftBillId);
@@ -419,7 +423,7 @@ class BillingProvider with ChangeNotifier {
   // ── Internal helpers ──────────────────────────────────────────────────────
 
   Future<void> _releaseSingleReservation(String reservationId) async {
-    await ApiService.releaseReservation(reservationId);
+    await ApiService.cancelHold(reservationId);
   }
 
   static String _generateDraftId() {

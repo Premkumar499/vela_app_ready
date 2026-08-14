@@ -16,8 +16,7 @@ class ConsolidatedInvoiceScreen extends StatefulWidget {
       _ConsolidatedInvoiceScreenState();
 }
 
-class _ConsolidatedInvoiceScreenState
-    extends State<ConsolidatedInvoiceScreen> {
+class _ConsolidatedInvoiceScreenState extends State<ConsolidatedInvoiceScreen> {
   bool _loading = true;
   Invoice? _consolidatedInvoice;
   String? _errorMessage;
@@ -80,19 +79,15 @@ class _ConsolidatedInvoiceScreenState
       }
 
       // Calculate date range
-      final dates = bills.map((b) => DateTime.parse(b.date)).toList()
-        ..sort();
+      final dates = bills.map((b) => DateTime.parse(b.date)).toList()..sort();
       final startDate = dates.first;
       final endDate = dates.last;
 
       final dateRange = startDate.day == endDate.day &&
               startDate.month == endDate.month &&
               startDate.year == endDate.year
-          ? '${_formatDate(startDate)}'
+          ? _formatDate(startDate)
           : '${_formatDate(startDate)} to ${_formatDate(endDate)}';
-
-      // Calculate totals
-      final totalAmount = bills.fold<double>(0, (sum, b) => sum + b.grandTotal);
 
       // Determine most common payment type
       final paymentTypes = <String, int>{};
@@ -100,9 +95,8 @@ class _ConsolidatedInvoiceScreenState
         paymentTypes[bill.paymentType] =
             (paymentTypes[bill.paymentType] ?? 0) + 1;
       }
-      final mostCommonPayment = paymentTypes.entries
-          .reduce((a, b) => a.value > b.value ? a : b)
-          .key;
+      final mostCommonPayment =
+          paymentTypes.entries.reduce((a, b) => a.value > b.value ? a : b).key;
 
       // Create consolidated invoice
       setState(() {
@@ -183,9 +177,21 @@ class _ConsolidatedInvoiceScreenState
                 )
               : _consolidatedInvoice == null
                   ? const Center(child: Text('No data available'))
-                  : SingleChildScrollView(
-                      padding: const EdgeInsets.all(16),
-                      child: InvoicePreview(invoice: _consolidatedInvoice!),
+                  : LayoutBuilder(
+                      builder: (context, constraints) {
+                        final preview =
+                            InvoicePreview(invoice: _consolidatedInvoice!);
+                        return SingleChildScrollView(
+                          padding: const EdgeInsets.all(16),
+                          child: constraints.maxWidth < 700
+                              ? FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  alignment: Alignment.topCenter,
+                                  child: SizedBox(width: 700, child: preview),
+                                )
+                              : Center(child: preview),
+                        );
+                      },
                     ),
     );
   }

@@ -37,78 +37,152 @@ class PosBillItemRow extends StatelessWidget {
           horizontal: PosTheme.padMd,
           vertical: 10,
         ),
-        child: Row(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final narrow = constraints.maxWidth < 340;
+            if (narrow) return _buildNarrow(context);
+            return _buildWide(context);
+          },
+        ),
+      ),
+    );
+  }
+
+  // ── Item name column (shared by both layouts) ──────────────────────────
+  Widget _buildNameColumn() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          item.productName,
+          style: PosTheme.bodyBold.copyWith(fontSize: 13),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        const SizedBox(height: 2),
+        _MiniChip(label: item.unit, color: PosTheme.primary),
+      ],
+    );
+  }
+
+  // ── Amount text that shrinks instead of overflowing ────────────────────
+  Widget _buildAmount(String text, TextStyle style) {
+    return Flexible(
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: Alignment.centerRight,
+        child: Text(text, style: style, maxLines: 1),
+      ),
+    );
+  }
+
+  // ── Narrow (phone): name+delete on top, stepper+amounts below ──────────
+  Widget _buildNarrow(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── Row number ───────────────────────────────────────────
             SizedBox(
               width: 22,
               child: Text(
                 '${index + 1}',
-                style: PosTheme.caption.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+                style: PosTheme.caption.copyWith(fontWeight: FontWeight.w700),
                 textAlign: TextAlign.center,
               ),
             ),
             const SizedBox(width: 8),
-
-            // ── Item name ────────────────────────────────────────────
-            Expanded(
-              flex: 4,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    item.productName,
-                    style: PosTheme.bodyBold.copyWith(fontSize: 13),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 2),
-                  // Unit chip only — no GST
-                  _MiniChip(
-                    label: item.unit,
-                    color: PosTheme.primary,
-                  ),
-                ],
-              ),
+            Expanded(child: _buildNameColumn()),
+            const SizedBox(width: 8),
+            _DeleteButton(onDelete: onDelete),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            _QtyStepper(item: item, onIncrease: onIncrease, onDecrease: onDecrease),
+            const SizedBox(width: 12),
+            _buildAmount(
+              '₹${item.rate.toStringAsFixed(2)}',
+              PosTheme.small.copyWith(color: PosTheme.textSecondary),
             ),
-
-            // ── Qty stepper ──────────────────────────────────────────
-            Expanded(
-              flex: 3,
-              child: Center(child: _QtyStepper(item: item, onIncrease: onIncrease, onDecrease: onDecrease)),
+            const SizedBox(width: 12),
+            _buildAmount(
+              '₹${item.total.toStringAsFixed(2)}',
+              PosTheme.bodyBold.copyWith(color: PosTheme.primary, fontSize: 14),
             ),
+          ],
+        ),
+      ],
+    );
+  }
 
-            // ── Rate ─────────────────────────────────────────────────
-            Expanded(
-              flex: 2,
+  // ── Wide (desktop/tablet): single row ───────────────────────────────────
+  Widget _buildWide(BuildContext context) {
+    return Row(
+      children: [
+        // ── Row number ───────────────────────────────────────────────
+        SizedBox(
+          width: 22,
+          child: Text(
+            '${index + 1}',
+            style: PosTheme.caption.copyWith(fontWeight: FontWeight.w700),
+            textAlign: TextAlign.center,
+          ),
+        ),
+        const SizedBox(width: 8),
+
+        // ── Item name ────────────────────────────────────────────────
+        Expanded(flex: 4, child: _buildNameColumn()),
+
+        // ── Qty stepper ──────────────────────────────────────────────
+        Expanded(
+          flex: 3,
+          child: Center(
+            child: _QtyStepper(item: item, onIncrease: onIncrease, onDecrease: onDecrease),
+          ),
+        ),
+
+        // ── Rate ─────────────────────────────────────────────────────
+        Expanded(
+          flex: 2,
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
               child: Text(
                 '₹${item.rate.toStringAsFixed(2)}',
                 style: PosTheme.small.copyWith(color: PosTheme.textSecondary),
-                textAlign: TextAlign.right,
+                maxLines: 1,
               ),
             ),
+          ),
+        ),
 
-            // ── Total ────────────────────────────────────────────────
-            Expanded(
-              flex: 2,
+        // ── Total ────────────────────────────────────────────────────
+        Expanded(
+          flex: 2,
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
               child: Text(
                 '₹${item.total.toStringAsFixed(2)}',
                 style: PosTheme.bodyBold.copyWith(
                   color: PosTheme.primary,
                   fontSize: 14,
                 ),
-                textAlign: TextAlign.right,
+                maxLines: 1,
               ),
             ),
-            const SizedBox(width: 6),
-
-            // ── Delete ───────────────────────────────────────────────
-            _DeleteButton(onDelete: onDelete),
-          ],
+          ),
         ),
-      ),
+        const SizedBox(width: 6),
+
+        // ── Delete ───────────────────────────────────────────────────
+        _DeleteButton(onDelete: onDelete),
+      ],
     );
   }
 }
@@ -129,7 +203,7 @@ class _QtyStepper extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 34,
+      height: 36,
       decoration: BoxDecoration(
         color: PosTheme.surface,
         border: Border.all(color: PosTheme.border),
@@ -147,7 +221,7 @@ class _QtyStepper extends StatelessWidget {
           ),
           // Quantity display
           Container(
-            constraints: const BoxConstraints(minWidth: 34),
+            constraints: const BoxConstraints(minWidth: 30),
             alignment: Alignment.center,
             padding: const EdgeInsets.symmetric(horizontal: 4),
             decoration: const BoxDecoration(
@@ -210,7 +284,7 @@ class _StepBtn extends StatelessWidget {
       ),
       child: SizedBox(
         width: 30,
-        height: 34,
+        height: 36,
         child: Icon(icon, size: 16, color: color),
       ),
     );
@@ -230,13 +304,13 @@ class _DeleteButton extends StatelessWidget {
       onTap: onDelete,
       borderRadius: BorderRadius.circular(PosTheme.radiusSm),
       child: Container(
-        width: 30,
-        height: 30,
+        width: 34,
+        height: 34,
         decoration: BoxDecoration(
           color: PosTheme.dangerLight,
           borderRadius: BorderRadius.circular(PosTheme.radiusSm),
         ),
-        child: const Icon(Icons.delete_outline_rounded, size: 16, color: PosTheme.danger),
+        child: const Icon(Icons.delete_outline_rounded, size: 17, color: PosTheme.danger),
       ),
     );
   }

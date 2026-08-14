@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./billing_system/backend
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
+    env_file:
+      - ./billing_system/backend/.env
+
+  frontend:
+    build:
+      context: ./billing_system/frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped

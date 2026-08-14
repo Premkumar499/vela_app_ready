@@ -49,89 +49,107 @@ class InvoicePreview extends StatelessWidget {
 
   // Top header with company info and invoice metadata
   Widget _topHeader() {
-    return Row(
+    final companyBlock = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Flexible(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Company logo image - full size
-                  Image.asset(
-                    'assets/images/company_logo.jpg',
-                    width: 80,
-                    height: 80,
-                    fit: BoxFit.contain,
-                    errorBuilder: (context, error, stackTrace) {
-                      // Fallback to icon if image fails to load
-                      return Container(
-                        width: 40,
-                        height: 40,
-                        decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: _navy,
-                        ),
-                        child: const Icon(Icons.storefront,
-                            color: Colors.white, size: 20),
-                      );
-                    },
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Company logo image - full size
+            Image.asset(
+              'assets/images/company_logo.jpg',
+              width: 80,
+              height: 80,
+              fit: BoxFit.contain,
+              errorBuilder: (context, error, stackTrace) {
+                // Fallback to icon if image fails to load
+                return Container(
+                  width: 40,
+                  height: 40,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: _navy,
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      Invoice.companyName,
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: _navy,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 260),
-                child: Text(
-                  Invoice.companyAddress,
-                  style: TextStyle(fontSize: 11.5, color: Colors.grey.shade800),
+                  child: const Icon(Icons.storefront,
+                      color: Colors.white, size: 20),
+                );
+              },
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                Invoice.companyName,
+                softWrap: true,
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: _navy,
+                  letterSpacing: 0.5,
                 ),
               ),
-              const SizedBox(height: 6),
-              _kv('GSTIN', Invoice.companyGstin),
-              _kv('FSSAI', Invoice.companyFssai),
-              _kv('PAN', Invoice.companyPan),
-              _kv('Phone', Invoice.companyPhone),
-              _kv('Email', Invoice.companyEmail),
-            ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 260),
+          child: Text(
+            Invoice.companyAddress,
+            style: TextStyle(fontSize: 11.5, color: Colors.grey.shade800),
           ),
         ),
-        const Spacer(),
-        Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: _lightBlueBg,
-            border: Border.all(color: Colors.grey.shade300),
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Column(
+        const SizedBox(height: 6),
+        _kv('GSTIN', Invoice.companyGstin),
+        _kv('FSSAI', Invoice.companyFssai),
+        _kv('PAN', Invoice.companyPan),
+        _kv('Phone', Invoice.companyPhone),
+        _kv('Email', Invoice.companyEmail),
+      ],
+    );
+
+    final metaBox = Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: _lightBlueBg,
+        border: Border.all(color: Colors.grey.shade300),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _metaRow('Invoice No:', invoice.invoiceNo),
+          const SizedBox(height: 4),
+          _metaRow('Date:', invoice.invoiceDate),
+          if (invoice.invoiceTime.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            _metaRow('Time:', invoice.invoiceTime),
+          ],
+        ],
+      ),
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // On mobile (< 480px) stack vertically so nothing is squished.
+        if (constraints.maxWidth < 480) {
+          return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _metaRow('Invoice No:', invoice.invoiceNo),
-              const SizedBox(height: 4),
-              _metaRow('Date:', invoice.invoiceDate),
-              if (invoice.invoiceTime.isNotEmpty) ...[
-                const SizedBox(height: 4),
-                _metaRow('Time:', invoice.invoiceTime),
-              ],
+              companyBlock,
+              const SizedBox(height: 12),
+              metaBox,
             ],
-          ),
-        ),
-      ],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Flexible(child: companyBlock),
+            const SizedBox(width: 12),
+            metaBox,
+          ],
+        );
+      },
     );
   }
 
@@ -162,6 +180,8 @@ class InvoicePreview extends StatelessWidget {
             TextSpan(text: value),
           ],
         ),
+        softWrap: true,
+        overflow: TextOverflow.visible,
       ),
     );
   }
@@ -184,7 +204,8 @@ class InvoicePreview extends StatelessWidget {
         const SizedBox(height: 4),
         Text(invoice.customerAddress,
             style: TextStyle(fontSize: 11.5, color: Colors.grey.shade800)),
-        if (invoice.customerGstin.isNotEmpty && invoice.customerGstin != 'N/A') ...[
+        if (invoice.customerGstin.isNotEmpty &&
+            invoice.customerGstin != 'N/A') ...[
           const SizedBox(height: 4),
           _kv('GSTIN', invoice.customerGstin),
         ],
@@ -198,7 +219,7 @@ class InvoicePreview extends StatelessWidget {
 
   // Items table
   Widget _itemsTable() {
-    final headerStyle = const TextStyle(
+    const headerStyle = TextStyle(
         fontSize: 10.5, fontWeight: FontWeight.bold, color: _navy);
     final cellStyle = TextStyle(fontSize: 11, color: Colors.grey.shade900);
 
@@ -264,72 +285,87 @@ class InvoicePreview extends StatelessWidget {
 
   // Payment details and total
   Widget _paymentAndTotal() {
-    return Row(
+    final paymentDetails = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(
-          flex: 5,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('PAYMENT DETAILS',
-                  style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                      color: _navy,
-                      letterSpacing: 1)),
-              const SizedBox(height: 6),
-              _kv('Mode', invoice.paymentMode),
-              _kv('Txn ID', invoice.txnId),
-              _kv('UPI ID', invoice.upiId),
-            ],
+        const Text('PAYMENT DETAILS',
+            style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                color: _navy,
+                letterSpacing: 1)),
+        const SizedBox(height: 6),
+        _kv('Mode', invoice.paymentMode),
+        _kv('Txn ID', invoice.txnId),
+        _kv('UPI ID', invoice.upiId),
+      ],
+    );
+
+    final totalBlock = Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Align(
+          alignment: Alignment.centerRight,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+            decoration: BoxDecoration(
+              color: _navy,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('TOTAL AMOUNT',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12)),
+                  const SizedBox(width: 18),
+                  Text(formatCurrency(invoice.totalAmount),
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15)),
+                ],
+              ),
+            ),
           ),
         ),
-        Expanded(
-          flex: 5,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Align(
-                alignment: Alignment.centerRight,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
-                  decoration: BoxDecoration(
-                    color: _navy,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text('TOTAL AMOUNT',
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12)),
-                      const SizedBox(width: 18),
-                      Text(formatCurrency(invoice.totalAmount),
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 15)),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Words: ${NumberToWords.amountInWords(invoice.totalAmount)}',
-                textAlign: TextAlign.right,
-                style: TextStyle(
-                    fontSize: 10.5,
-                    fontStyle: FontStyle.italic,
-                    color: Colors.grey.shade700),
-              ),
-            ],
-          ),
+        const SizedBox(height: 8),
+        Text(
+          'Words: ${NumberToWords.amountInWords(invoice.totalAmount)}',
+          textAlign: TextAlign.right,
+          style: TextStyle(
+              fontSize: 10.5,
+              fontStyle: FontStyle.italic,
+              color: Colors.grey.shade700),
         ),
       ],
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Narrow screens: payment details on top, total below it.
+        if (constraints.maxWidth < 400) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              paymentDetails,
+              const SizedBox(height: 14),
+              totalBlock,
+            ],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(flex: 5, child: paymentDetails),
+            Expanded(flex: 5, child: totalBlock),
+          ],
+        );
+      },
     );
   }
 

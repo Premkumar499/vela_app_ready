@@ -22,6 +22,9 @@ dependencies:
   # Icons
   cupertino_icons: ^1.0.6
 
+  # Local session / settings storage
+  shared_preferences: ^2.3.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

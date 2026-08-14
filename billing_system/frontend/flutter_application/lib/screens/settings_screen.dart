@@ -97,8 +97,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             icon: Icons.receipt,
             children: [
               _SettingsTile(
-                label: 'Invoice Prefix',
-                value: 'INV',
+                label: 'Invoice Format',
+                value: 'YYYYMMMDDHHmmA (e.g. 2026AUG121325A)',
                 icon: Icons.tag,
               ),
               _SettingsTile(
@@ -128,18 +128,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
             icon: Icons.business,
             children: [
               _SettingsTile(
-                  label: 'Company Name', value: 'My Shop', icon: Icons.store),
+                  label: 'Company Name', value: 'VELA AGENCY', icon: Icons.store),
               _SettingsTile(
                   label: 'Address',
-                  value: '123 Main Street, City',
+                  value: 'Burgur Road, Vellai Pillaiyar Kovil, Anthiyur',
                   icon: Icons.location_on),
               _SettingsTile(
                   label: 'Phone',
-                  value: '+91 99999 99999',
+                  value: '+91 986522355',
                   icon: Icons.phone),
               _SettingsTile(
                   label: 'GSTIN',
-                  value: '29XXXXX0000X1ZX',
+                  value: '33BAZPM1155J1ZB',
                   icon: Icons.badge),
             ],
           ),
@@ -151,22 +151,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
             icon: Icons.info_outline,
             children: [
               _SettingsTile(
-                  label: 'Version', value: '1.0.0 (Prototype)', icon: Icons.new_releases),
+                  label: 'Version', value: '1.0.0', icon: Icons.new_releases),
               _SettingsTile(
                   label: 'Stack',
                   value: 'Flutter · Python Flask',
                   icon: Icons.layers),
               _SettingsTile(
                   label: 'Storage',
-                  value: 'In-Memory (no database)',
-                  icon: Icons.memory),
+                  value: 'Supabase PostgreSQL',
+                  icon: Icons.cloud_outlined),
               const ListTile(
                 leading: Icon(Icons.info, color: AppTheme.info),
-                title: Text('Prototype Mode'),
+                title: Text('About this build'),
                 subtitle: Text(
-                    'Data is stored in server memory.\n'
-                    'All data will be lost when the server restarts.\n'
-                    'Database integration is planned for v2.'),
+                    'Data is persisted in Supabase. '
+                    'Stock reservations are atomic and safe for concurrent access.'),
                 isThreeLine: true,
               ),
             ],

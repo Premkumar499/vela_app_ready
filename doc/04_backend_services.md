@@ -122,7 +122,7 @@ Bundled fallback data used when Supabase is unreachable.
 
 | Export | Contents |
 |--------|----------|
-| `SAMPLE_PRODUCTS` | Currently **empty list** (products are DB-driven). Historical catalogue lives in `_REMOVED_PRODUCTS`. |
+| `SAMPLE_PRODUCTS` | Full 545-item offline fallback catalogue. Used whenever Supabase is unreachable so the POS stays usable (live products are DB-driven). |
 | `SAMPLE_CUSTOMERS` | Single Walk-in Customer fallback. |
 
 > Note: `tests/test_billing.py` still expects 545 products — those tests assume the

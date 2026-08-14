@@ -10,6 +10,7 @@ Flow (manual push, admin-triggered):
     4. On success, delete the inbox row (bill data is now permanent).
 """
 
+import json
 import logging
 from datetime import datetime, timezone
 
@@ -37,13 +38,15 @@ class SalespersonBillService:
     # ------------------------------------------------------------------
     # List the inbox
     # ------------------------------------------------------------------
-    def list_pending(self) -> list[dict]:
+    def list_pending(self, statuses: list[str] = None) -> list[dict]:
+        if statuses is None:
+            statuses = ["PENDING"]
         try:
             sb = _get_supabase()
             rows = (
                 sb.table("salesperson_bills")
                 .select("*")
-                .eq("status", "PENDING")
+                .in_("status", statuses)
                 .order("created_at", desc=True)
                 .execute()
             ).data
@@ -70,32 +73,116 @@ class SalespersonBillService:
             row = resp.data
             if not row:
                 return {"success": False, "message": f"No inbox row with id {bill_id}"}
-            if row.get("status") != "PENDING":
+            if row.get("status") not in ("PENDING", "ERROR"):
                 return {
                     "success": False,
                     "message": f"Inbox row is already {row.get('status')}",
                 }
 
+            # Atomically claim the row so a second worker (auto-polling +
+            # manual push racing on the same id) cannot double-bill it.
+            # We change the status to 'PROCESSED' during the claim to prevent other
+            # threads/workers from matching the status and double-processing.
+            claimed = (
+                sb.table("salesperson_bills")
+                .update({"status": "PROCESSED", "updated_at": datetime.now(timezone.utc).isoformat()})
+                .eq("id", bill_id)
+                .in_("status", ["PENDING", "ERROR"])
+                .execute()
+            )
+            if not claimed.data:
+                return {
+                    "success": False,
+                    "message": f"Inbox row {bill_id} was already claimed by another worker",
+                }
+
             items_raw = row.get("items") or []
+
+            # Inbox rows created by the salesman app store items as a JSON
+            # *string* (TEXT column), not a JSONB array. Normalize to a list
+            # before iterating, otherwise every character is treated as an item.
+            if isinstance(items_raw, str):
+                try:
+                    items_raw = json.loads(items_raw)
+                except (TypeError, ValueError):
+                    items_raw = []
+            if not isinstance(items_raw, list):
+                items_raw = [items_raw] if items_raw else []
+            
+            # Fetch product details from DB for fallback units and rates
+            try:
+                products_db = sb.table("products").select("product_id, product_name, selling_price, unit").execute().data or []
+            except Exception as pe:
+                print(f"[SalespersonBillService] Error fetching products for fallback: {pe}")
+                products_db = []
+
+            prod_lookup = {}
+            valid_pids = set()
+            for p in products_db:
+                p_id = p.get("product_id")
+                p_name = (p.get("product_name") or "").lower().strip()
+                if p_id:
+                    prod_lookup[p_id] = p
+                    valid_pids.add(str(p_id))
+                if p_name:
+                    prod_lookup[p_name] = p
+
             items = []
             missing = []
             for it in items_raw:
-                product_id = self._resolve_product_id(it.get("product_name"))
+                if isinstance(it, str):
+                    # Legacy inbox rows store items as plain product names
+                    product_name = it
+                    product_id = self._resolve_product_id(product_name)
+                    db_prod = prod_lookup.get(product_name.lower().strip()) if product_name else None
+                    db_unit = db_prod.get("unit") if db_prod else "Nos"
+                    db_price = float(db_prod.get("selling_price") or 0.0) if db_prod else 0.0
+                    quantity = 1
+                    rate = db_price
+                    unit = db_unit
+                else:
+                    product_name = it.get("product_name", "")
+                    # Only trust a stored product_id if it truly exists in the
+                    # products table (fake ids like "P001" would break the FK).
+                    stored_pid = str(it.get("product_id") or "").strip()
+                    product_id = (
+                        stored_pid if stored_pid in valid_pids
+                        else self._resolve_product_id(product_name)
+                    )
+                    db_prod = prod_lookup.get(product_id) or prod_lookup.get((product_name or "").lower().strip())
+                    db_unit = db_prod.get("unit") if db_prod else "Nos"
+                    db_price = float(db_prod.get("selling_price") or 0.0) if db_prod else 0.0
+                    unit = it.get("unit") or db_unit or "Nos"
+                    rate = float(it.get("rate") or it.get("unit_price") or it.get("price") or db_price or 0.0)
+                    # Salesman apps may send the key as "quantity" or "qty";
+                    # coerce safely and fall back to 1 if neither is usable.
+                    qty_raw = it.get("quantity")
+                    if qty_raw is None:
+                        qty_raw = it.get("qty")
+                    try:
+                        quantity = float(qty_raw or 0) if qty_raw not in (None, "") else 1.0
+                    except (TypeError, ValueError):
+                        quantity = 1.0
+
                 if not product_id:
-                    missing.append(it.get("product_name", "?"))
+                    missing.append(product_name or "?")
+                    continue
+
                 items.append({
                     "product_id":   product_id,
-                    "product_name": it.get("product_name", ""),
-                    "unit":         it.get("unit", "Nos"),
-                    "quantity":     float(it.get("quantity", 0)),
-                    "rate":         float(it.get("rate", 0)),
+                    "product_name": product_name,
+                    "unit":         unit,
+                    "quantity":     quantity,
+                    "rate":         rate,
                 })
 
             if missing:
-                return {
-                    "success": False,
-                    "message": "Could not match product(s): " + ", ".join(missing),
-                }
+                err_msg = "Could not match product(s): " + ", ".join(missing)
+                sb.table("salesperson_bills").update({
+                    "status": "ERROR",
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }).eq("id", bill_id).execute()
+                return {"success": False, "message": err_msg}
 
             payload = {
                 "customer_id":    row.get("customer_id") or 0,
@@ -109,10 +196,16 @@ class SalespersonBillService:
                 "price_list":     row.get("price_list") or "Retail",
                 "draft_bill_id":  "",
                 "items":          items,
+                "is_salesperson_bill": True,
             }
 
             result = billing_service.create_bill(payload)
             if not result.get("success"):
+                # Mark as ERROR so we don't retry indefinitely
+                sb.table("salesperson_bills").update({
+                    "status": "ERROR",
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }).eq("id", bill_id).execute()
                 return result
 
             # Bill created → data is permanent in erp_billing_system /
@@ -125,6 +218,14 @@ class SalespersonBillService:
             import traceback
             traceback.print_exc()
             logger.exception("[SalespersonBillService] push failed")
+            try:
+                sb = _get_supabase()
+                sb.table("salesperson_bills").update({
+                    "status": "ERROR",
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }).eq("id", bill_id).execute()
+            except Exception:
+                pass
             return {"success": False, "message": f"Failed to push bill: {exc}"}
 
     # ------------------------------------------------------------------

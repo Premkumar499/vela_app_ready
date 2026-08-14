@@ -20,7 +20,6 @@ class ProductsScreen extends StatefulWidget {
 class _ProductsScreenState extends State<ProductsScreen> {
   List<Product> _allProducts = [];
   List<Product> _filtered = [];
-  List<String> _categories = [];
   String _selectedCategory = 'All';
   bool _isLoading = true;
   bool _isOffline = false;
@@ -51,13 +50,8 @@ class _ProductsScreenState extends State<ProductsScreen> {
 
     if (result.success) {
       final products = result.data!;
-      final cats = <String>{'All'};
-      for (final p in products) {
-        if (p.category != 'Function Bill Products') cats.add(p.category);
-      }
       setState(() {
         _allProducts = products;
-        _categories = cats.toList();
         _isOffline = result.isOffline;
         _applyFilter();
         _isLoading = false;
@@ -80,11 +74,6 @@ class _ProductsScreenState extends State<ProductsScreen> {
         return matchesSearch && matchesCategory;
       }).toList();
     });
-  }
-
-  void _selectCategory(String cat) {
-    setState(() => _selectedCategory = cat);
-    _applyFilter();
   }
 
   void _onProductTap(Product product) {

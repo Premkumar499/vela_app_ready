@@ -96,7 +96,7 @@ class _PosProductCardState extends State<PosProductCard>
 
   Color get _color => PosTheme.avatarColor(widget.product.id.hashCode);
 
-  bool get _lowStock => widget.product.stock < 10;
+  bool get _lowStock => widget.product.availableStock < 10;
 
   @override
   Widget build(BuildContext context) {
@@ -180,7 +180,7 @@ class _PosProductCardState extends State<PosProductCard>
                           const Spacer(),
                           // Stock
                           _StockPill(
-                            stock:  widget.product.stock,
+                            stock:  widget.product.availableStock,
                             unit:   widget.product.unit,
                             isLow:  _lowStock,
                           ),
@@ -266,7 +266,6 @@ class _Avatar extends StatelessWidget {
   }
 }
 
-// ─── Stock pill ───────────────────────────────────────────────────────────────
 class _StockPill extends StatelessWidget {
   final double stock;
   final String unit;

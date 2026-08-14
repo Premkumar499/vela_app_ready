@@ -125,10 +125,119 @@ class ApiService {
             .toList();
       }
       if (category != null && category.isNotEmpty) {
-        fallback =
-            fallback.where((p) => p.category == category).toList();
+        // Backend filters case-insensitively — keep the offline fallback in sync.
+        final q = category.toLowerCase();
+        fallback = fallback.where((p) => p.category.toLowerCase() == q).toList();
       }
       return ApiResult.ok(fallback, isOffline: true);
+    }
+  }
+
+  /// Create a new product in the backend (products + inventory tables).
+  static Future<ApiResult<Product>> createProduct({
+    required String name,
+    required String category,
+    required String unit,
+    required double price,
+    required double stock,
+    String sku = '',
+  }) async {
+    try {
+      final response = await _client
+          .post(
+            Uri.parse('${AppConstants.baseUrl}/products/'),
+            headers: _headers,
+            body: jsonEncode({
+              'name': name,
+              'category': category,
+              'unit': unit,
+              'price': price,
+              'stock': stock,
+              'sku': sku,
+            }),
+          )
+          .timeout(AppConstants.requestTimeout);
+
+      if (response.statusCode == 201) {
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        return ApiResult.ok(
+            Product.fromJson(body['data'] as Map<String, dynamic>));
+      }
+      return ApiResult.err(_extractError(response));
+    } catch (_) {
+      return const ApiResult.err('Cannot reach server to create product.');
+    }
+  }
+
+  /// Update an existing product in the backend.
+  static Future<ApiResult<Product>> updateProduct(Product product) async {
+    try {
+      final response = await _client
+          .put(
+            Uri.parse('${AppConstants.baseUrl}/products/${product.id}'),
+            headers: _headers,
+            body: jsonEncode({
+              'name': product.name,
+              'category': product.category,
+              'unit': product.unit,
+              'price': product.price,
+              'stock': product.stock,
+              'sku': product.sku,
+            }),
+          )
+          .timeout(AppConstants.requestTimeout);
+
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        return ApiResult.ok(
+            Product.fromJson(body['data'] as Map<String, dynamic>));
+      }
+      return ApiResult.err(_extractError(response));
+    } catch (_) {
+      return const ApiResult.err('Cannot reach server to update product.');
+    }
+  }
+
+  /// Delete a product by [productId].
+  static Future<ApiResult<String>> deleteProduct(String productId) async {
+    try {
+      final response = await _client
+          .delete(
+            Uri.parse('${AppConstants.baseUrl}/products/$productId'),
+            headers: _headers,
+          )
+          .timeout(AppConstants.requestTimeout);
+
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        return ApiResult.ok(body['message'] as String);
+      }
+      return ApiResult.err(_extractError(response));
+    } catch (_) {
+      return const ApiResult.err(
+          'Cannot delete product: server is unreachable.');
+    }
+  }
+
+  /// Bulk delete products by [productIds].
+  static Future<ApiResult<String>> bulkDeleteProducts(List<String> productIds) async {
+    try {
+      final response = await _client
+          .post(
+            Uri.parse('${AppConstants.baseUrl}/products/bulk-delete'),
+            headers: _headers,
+            body: jsonEncode({'product_ids': productIds}),
+          )
+          .timeout(AppConstants.requestTimeout);
+
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        return ApiResult.ok(body['message'] as String);
+      }
+      return ApiResult.err(_extractError(response));
+    } catch (_) {
+      return const ApiResult.err(
+          'Cannot delete products: server is unreachable.');
     }
   }
 
@@ -331,6 +440,29 @@ class ApiService {
     }
   }
 
+  /// Bulk delete bills by [billNumbers].
+  static Future<ApiResult<String>> bulkDeleteBills(List<String> billNumbers) async {
+    try {
+      final response = await _client
+          .post(
+            Uri.parse('${AppConstants.baseUrl}/bills/bulk-delete'),
+            headers: _headers,
+            body: jsonEncode({'bill_numbers': billNumbers}),
+          )
+          .timeout(AppConstants.requestTimeout);
+
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        return ApiResult.ok(body['message'] as String);
+      }
+      return ApiResult.err(_extractError(response));
+    } catch (_) {
+      return const ApiResult.err(
+          'Cannot delete bills: server is unreachable.');
+    }
+  }
+
+
   /// Create a new customer in the backend (saves to Supabase).
   static Future<ApiResult<Customer>> createCustomer({
     required String name,
@@ -360,6 +492,76 @@ class ApiService {
       return ApiResult.err(_extractError(response));
     } catch (_) {
       return const ApiResult.err('Cannot reach server to create customer.');
+    }
+  }
+
+  /// Update an existing customer in the backend.
+  static Future<ApiResult<Customer>> updateCustomer(Customer customer) async {
+    try {
+      final response = await _client
+          .put(
+            Uri.parse('${AppConstants.baseUrl}/customers/${customer.id}'),
+            headers: _headers,
+            body: jsonEncode({
+              'name': customer.name,
+              'phone': customer.phone,
+              'email': customer.email,
+              'address': customer.address,
+            }),
+          )
+          .timeout(AppConstants.requestTimeout);
+
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        return ApiResult.ok(
+            Customer.fromJson(body['data'] as Map<String, dynamic>));
+      }
+      return ApiResult.err(_extractError(response));
+    } catch (_) {
+      return const ApiResult.err('Cannot reach server to update customer.');
+    }
+  }
+
+  /// Delete a customer by [customerId].
+  static Future<ApiResult<String>> deleteCustomer(String customerId) async {
+    try {
+      final response = await _client
+          .delete(
+            Uri.parse('${AppConstants.baseUrl}/customers/$customerId'),
+            headers: _headers,
+          )
+          .timeout(AppConstants.requestTimeout);
+
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        return ApiResult.ok(body['message'] as String);
+      }
+      return ApiResult.err(_extractError(response));
+    } catch (_) {
+      return const ApiResult.err(
+          'Cannot delete customer: server is unreachable.');
+    }
+  }
+
+  /// Bulk delete customers by [customerIds].
+  static Future<ApiResult<String>> bulkDeleteCustomers(List<String> customerIds) async {
+    try {
+      final response = await _client
+          .post(
+            Uri.parse('${AppConstants.baseUrl}/customers/bulk-delete'),
+            headers: _headers,
+            body: jsonEncode({'customer_ids': customerIds}),
+          )
+          .timeout(AppConstants.requestTimeout);
+
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        return ApiResult.ok(body['message'] as String);
+      }
+      return ApiResult.err(_extractError(response));
+    } catch (_) {
+      return const ApiResult.err(
+          'Cannot delete customers: server is unreachable.');
     }
   }
 
@@ -544,6 +746,170 @@ class ApiService {
       return ApiResult.err(body['message'] as String? ?? 'Update reservation failed');
     } catch (_) {
       return const ApiResult.err('Cannot reach server to update reservation.');
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Stock Holds (migration 0011)
+  // Holds reserve stock WITHOUT deducting current_stock. Only the stock-out
+  // person's release-hold reduces current_stock (and reserved_stock).
+  // -------------------------------------------------------------------------
+
+  /// Hold [quantity] units of [productId] for a draft bill [draftBillId].
+  /// current_stock is NOT deducted; only reserved_stock increases.
+  /// Returns the full JSON response (success, reservation_id,
+  /// remaining_available, error_code, message).
+  static Future<ApiResult<Map<String, dynamic>>> holdStock({
+    required String productId,
+    required String draftBillId,
+    required double quantity,
+    String? userId,
+  }) async {
+    try {
+      final response = await _client
+          .post(
+            Uri.parse('${AppConstants.baseUrl}/reservations/hold'),
+            headers: _headers,
+            body: jsonEncode({
+              'product_id': productId,
+              'bill_id':    draftBillId,
+              'quantity':   quantity,
+              if (userId != null) 'user_id': userId,
+            }),
+          )
+          .timeout(AppConstants.requestTimeout);
+
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode == 200 && body['success'] == true) {
+        return ApiResult.ok(body);
+      }
+      return ApiResult.err(body['message'] as String? ?? 'Hold failed');
+    } catch (_) {
+      return const ApiResult.err('Cannot reach server to hold stock.');
+    }
+  }
+
+  /// Stock-out action: release a single hold, deducting current_stock AND
+  /// reserved_stock. Returns the error message on failure (e.g.
+  /// INSUFFICIENT_STOCK) so the stock-out screen can surface it.
+  static Future<ApiResult<Map<String, dynamic>>> releaseHold(
+      String reservationId) async {
+    try {
+      final response = await _client
+          .post(
+            Uri.parse('${AppConstants.baseUrl}/reservations/release-hold'),
+            headers: _headers,
+            body: jsonEncode({'reservation_id': reservationId}),
+          )
+          .timeout(AppConstants.requestTimeout);
+
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode == 200 && body['success'] == true) {
+        return ApiResult.ok(body);
+      }
+      return ApiResult.err(body['message'] as String? ?? 'Release failed');
+    } catch (_) {
+      return const ApiResult.err('Cannot reach server to release stock.');
+    }
+  }
+
+  /// Cancel a single hold by [reservationId] (fire-and-forget).
+  /// reserved_stock only; current_stock never changes.
+  static Future<void> cancelHold(String reservationId) async {
+    try {
+      await _client
+          .post(
+            Uri.parse('${AppConstants.baseUrl}/reservations/cancel-hold'),
+            headers: _headers,
+            body: jsonEncode({'reservation_id': reservationId}),
+          )
+          .timeout(AppConstants.requestTimeout);
+    } catch (_) {}
+  }
+
+  /// Atomically update a HELD reservation to [newQuantity].
+  /// Returns the full JSON response (success, old_quantity, new_quantity,
+  /// remaining_available, error_code, message).
+  static Future<ApiResult<Map<String, dynamic>>> updateHold({
+    required String reservationId,
+    required double newQuantity,
+  }) async {
+    try {
+      final response = await _client
+          .post(
+            Uri.parse('${AppConstants.baseUrl}/reservations/update-hold'),
+            headers: _headers,
+            body: jsonEncode({
+              'reservation_id': reservationId,
+              'new_quantity':   newQuantity,
+            }),
+          )
+          .timeout(AppConstants.requestTimeout);
+
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode == 200 && body['success'] == true) {
+        return ApiResult.ok(body);
+      }
+      return ApiResult.err(body['message'] as String? ?? 'Update hold failed');
+    } catch (_) {
+      return const ApiResult.err('Cannot reach server to update hold.');
+    }
+  }
+
+  /// Cancel all holds for [billId] (bill cancelled / deleted).
+  /// No current_stock change; reserved_stock is freed.
+  static Future<ApiResult<Map<String, dynamic>>> cancelBillHolds(
+      String billId) async {
+    try {
+      final response = await _client
+          .post(
+            Uri.parse('${AppConstants.baseUrl}/reservations/cancel-bill-holds'),
+            headers: _headers,
+            body: jsonEncode({'bill_id': billId}),
+          )
+          .timeout(AppConstants.requestTimeout);
+
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      return ApiResult.ok(body);
+    } catch (_) {
+      return const ApiResult.err('Cannot reach server to cancel holds.');
+    }
+  }
+
+  /// Expire stale DRAFT-* holds (fire-and-forget housekeeping).
+  /// Only abandoned drafts older than the hold window are cancelled;
+  /// real-bill holds never expire.
+  static Future<void> expireStaleHolds() async {
+    try {
+      await _client
+          .post(
+            Uri.parse('${AppConstants.baseUrl}/reservations/expire-stale-holds'),
+            headers: _headers,
+            body: jsonEncode({'hours': 2}),
+          )
+          .timeout(AppConstants.requestTimeout);
+    } catch (_) {}
+  }
+
+  /// Fetch the reserve table: all HELD reservations grouped by bill,
+  /// joined with product names and company bill info.
+  /// Returns the whole body ({success, count, data}).
+  static Future<ApiResult<Map<String, dynamic>>> getHeldReservations() async {
+    try {
+      final response = await _client
+          .get(
+            Uri.parse('${AppConstants.baseUrl}/reservations/held'),
+            headers: _headers,
+          )
+          .timeout(AppConstants.requestTimeout);
+
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode == 200 && body['success'] == true) {
+        return ApiResult.ok(body);
+      }
+      return ApiResult.err(body['message'] as String? ?? 'Failed to load reserve table');
+    } catch (_) {
+      return const ApiResult.err('Cannot reach server to load reserve table.');
     }
   }
 

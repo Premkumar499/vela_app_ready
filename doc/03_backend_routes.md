@@ -144,6 +144,35 @@ Body: `{ "invoice_number": "2026AUG08A161", "image_data": "<base64 PNG/JPEG>", "
 - `_generate_company_invoice_pdf_from_payload(invoice_no, payload)` — fallback PDF.
 - `_get_supabase()` — reads `.env` and returns an authenticated client.
 
+## 3.8 Stock Holds — `routes/reservations.py` (`/reservations`)
+
+Stock-hold system (migration `0011_stock_holds.sql`). Bills **hold** stock
+(`reserved_stock` up, `current_stock` untouched); only the stock-out person's
+`release-hold` ever decreases `current_stock`. `source_app='NON_GST_ERP'` rows
+only — never touches the friend's GST_ERP app.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/reservations/hold` | Hold stock for one bill line (`reserved_stock` only) |
+| POST | `/reservations/release-hold` | Stock-out: `current_stock` AND `reserved_stock` down, status `RELEASED` — the ONLY place `current_stock` decreases |
+| POST | `/reservations/cancel-hold` | Cancel a single hold (`reserved_stock` freed, no stock change) |
+| POST | `/reservations/update-hold` | Change a HELD reservation's quantity atomically |
+| POST | `/reservations/cancel-bill-holds` | Cancel all holds for a bill (bill deleted/cancelled) |
+| POST | `/reservations/expire-stale-holds` | Expire abandoned `DRAFT-*` holds older than `hours` (default 2). Real-bill holds never expire |
+| GET | `/reservations/held` | Reserve table: HELD holds grouped by bill + product/inventory/company joins — **only used by the Stock In-Charge (role_id 4), lands on `/stock-out` after login** |
+| GET | `/reservations/stock/<product_id>` | Live `current_stock` / `reserved_stock` for a product |
+
+`/reservations/hold` body: `{product_id, bill_id, quantity, user_id?}` —
+`400` on missing/zero fields, `409` on insufficient stock.
+`/reservations/held` returns `{success, count, data: [{bill_number, customer_name,
+customer_phone, payment_mode, sales_type, through, area, total_amount, invoice_date,
+invoice_time, created_at, total_quantity, items: [{reservation_id, product_id, name,
+unit, quantity, reserved_at, current_stock, reserved_stock, available_stock}]}]}`.
+Draft bills (`DRAFT-*`) get empty customer fields.
+
+Legacy reserve/release/update/complete endpoints remain for GST_ERP compatibility;
+the NON_GST app uses the hold endpoints above.
+
 ## Endpoint summary (quick reference)
 
 ```
@@ -168,6 +197,14 @@ POST   /invoice-export/save
 POST   /invoice-export/generate-company/<invoice_number>
 GET    /invoice-export/list/<bucket>
 GET    /invoice-export/download/<bucket>/<invoice_number>
+POST   /reservations/hold
+POST   /reservations/release-hold
+POST   /reservations/cancel-hold
+POST   /reservations/update-hold
+POST   /reservations/cancel-bill-holds
+POST   /reservations/expire-stale-holds
+GET    /reservations/held
+GET    /reservations/stock/<product_id>
 ```
 
 ## Related docs

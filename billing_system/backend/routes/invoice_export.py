@@ -23,6 +23,16 @@ BUCKET_MAP = {
 }
 
 
+def _fval(value, default: float = 0.0) -> float:
+    """Coerce a DB/payload value to float without raising on None/bad types."""
+    try:
+        if value is None or value == "":
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _get_supabase():
     from dotenv import load_dotenv
     from supabase import create_client
@@ -222,11 +232,11 @@ def _generate_company_invoice_pdf(invoice_no: str) -> bytes:
     ]
     tbl_data = [col_hdr]
     for idx, row in enumerate(items):
-        amt  = float(row.get("amount", 0))
-        rate = float(row.get("rate", 0))
-        qty  = float(row.get("quantity", 0))
-        unit = row.get("unit", "Nos")
-        desc = row.get("description", "")
+        amt  = _fval(row.get("amount"))
+        rate = _fval(row.get("rate"))
+        qty  = _fval(row.get("quantity"))
+        unit = row.get("unit") or "Nos"
+        desc = row.get("description") or ""
         desc_para = Paragraph(
             f"{desc}<br/><font size='7.5' color='#888888'>Unit: {unit}</font>",
             ps("cd1", 9, R, colors.black, TA_LEFT, leading=13)
@@ -258,7 +268,7 @@ def _generate_company_invoice_pdf(invoice_no: str) -> bytes:
                              spaceBefore=0, spaceAfter=12))
 
     # ── 4. PAYMENT + TOTAL ────────────────────────────────────────────────
-    total   = float(hdr.get("total_amount", 0))
+    total   = _fval(hdr.get("total_amount"))
     words   = hdr.get("amount_in_words", "")
     payment = hdr.get("payment_mode", "Cash")
     txn_id  = hdr.get("transaction_id", invoice_no) or invoice_no
@@ -364,6 +374,232 @@ def _generate_company_invoice_pdf(invoice_no: str) -> bytes:
     return buf.getvalue()
 
 
+def _generate_user_bill_pdf(bill_no: str) -> bytes:
+    """
+    Generate a customer user bill PDF (thermal receipt style) from erp_billing_system DB.
+    """
+    from reportlab.lib import colors
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (
+        SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer,
+        HRFlowable, Image as RLImage,
+    )
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    # ── Fonts ─────────────────────────────────────────────────────────────
+    try:
+        pdfmetrics.registerFont(TTFont("EngReg", "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"))
+    except Exception:
+        try:
+            pdfmetrics.registerFont(TTFont("EngReg", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"))
+        except Exception:
+            pass
+    
+    try:
+        pdfmetrics.registerFont(TTFont("EngBold", "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf"))
+    except Exception:
+        try:
+            pdfmetrics.registerFont(TTFont("EngBold", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"))
+        except Exception:
+            pass
+        
+    try:
+        pdfmetrics.registerFont(TTFont("TamilReg", "/usr/share/fonts/truetype/noto/NotoSansTamil-Regular.ttf"))
+    except Exception:
+        pass
+        
+    try:
+        pdfmetrics.registerFont(TTFont("TamilBold", "/usr/share/fonts/truetype/noto/NotoSansTamil-Bold.ttf"))
+    except Exception:
+        pass
+
+    # Assign font names based on what got successfully registered
+    registered = pdfmetrics.getRegisteredFontNames()
+    T_REG = "EngReg" if "EngReg" in registered else "Helvetica"
+    T_BOLD = "EngBold" if "EngBold" in registered else "Helvetica-Bold"
+    TAMIL_REG = "TamilReg" if "TamilReg" in registered else T_REG
+    TAMIL_BOLD = "TamilBold" if "TamilBold" in registered else T_BOLD
+
+    def ps(name, size=8, font=T_REG, color=colors.black, align=TA_LEFT, leading=None):
+        if leading is None:
+            leading = size * 1.25
+        kw = dict(fontSize=size, fontName=font, textColor=color, alignment=align, leading=leading)
+        return ParagraphStyle(name, **kw)
+
+    # ── DB fetch ──────────────────────────────────────────────────────────
+    print(f"[_generate_user_bill_pdf] Fetching DB data for bill: {bill_no}")
+    sb = _get_supabase()
+    hdr_rows = sb.table("erp_billing_system").select("*").eq("bill_no", bill_no).execute().data
+    if not hdr_rows:
+        print(f"[_generate_user_bill_pdf] ERROR: No rows found for bill: {bill_no}")
+        raise ValueError(f"User bill {bill_no} not found in DB")
+    hdr = hdr_rows[0]
+    print(f"[_generate_user_bill_pdf] Found header: bill_id={hdr.get('bill_id')}, customer={hdr.get('customer_name')}")
+    items = sb.table("erp_billing_system_items") \
+        .select("*").eq("bill_id", hdr["bill_id"]).order("sno").execute().data
+    print(f"[_generate_user_bill_pdf] Found {len(items)} items")
+
+    # Dynamic height calculation to avoid page breaks
+    doc_height = 360 + (len(items) * 45)
+    doc_height = max(doc_height, 420)  # Min height
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=(80*mm, doc_height),
+                            leftMargin=4*mm, rightMargin=4*mm,
+                            topMargin=5*mm, bottomMargin=5*mm)
+    story = []
+
+    # ── 1. LOGO & HEADER ──────────────────────────────────────────────────
+    LOGO_PATH = os.path.join(os.path.dirname(__file__), "..", "company_logo.jpg")
+    if os.path.exists(LOGO_PATH):
+        try:
+            story.append(RLImage(LOGO_PATH, width=12*mm, height=12*mm, hAlign='CENTER'))
+            story.append(Spacer(1, 2))
+        except Exception:
+            pass
+
+    story.append(Paragraph("VELA AGENCY", ps("h1", 13, T_BOLD, align=TA_CENTER, leading=15)))
+    story.append(Paragraph(f"<font face='{TAMIL_BOLD}'>மளிகை மொத்த மற்றும் சில்லறை வியாபாரம்...</font>", ps("h2", 7.5, T_BOLD, align=TA_CENTER, leading=9)))
+    story.append(Paragraph(f"<font face='{TAMIL_REG}'>பர்கூர் ரோடு, வெள்ளை பிள்ளையார் கோவில், அந்தியூர்.</font>", ps("h3", 6.5, T_REG, align=TA_CENTER, leading=8)))
+    story.append(Spacer(1, 4))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=colors.black, spaceAfter=4))
+    story.append(Paragraph("INVOICE / CASH BILL", ps("lbl", 9, T_BOLD, align=TA_CENTER)))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=colors.black, spaceBefore=4, spaceAfter=6))
+
+    # ── 2. META ───────────────────────────────────────────────────────────
+    bill_date = hdr.get("bill_date", "")
+    bill_time = hdr.get("bill_time", "") or ""
+    try:
+        from datetime import datetime as _dt
+        bill_date_fmt = _dt.strptime(bill_date, "%Y-%m-%d").strftime("%d-%m-%Y")
+    except Exception:
+        bill_date_fmt = bill_date
+
+    meta_data = [
+        [Paragraph(f"Bill No : {bill_no}", ps("m1", 7, T_BOLD)), Paragraph(f"Date : {bill_date_fmt}", ps("m2", 7, T_BOLD, align=TA_RIGHT))],
+        [Paragraph(f"Time    : {bill_time}", ps("m3", 7, T_BOLD)), Paragraph("", ps("m4", 7))]
+    ]
+    meta_table = Table(meta_data, colWidths=[102, 102])
+    meta_table.setStyle(TableStyle([
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 1),
+        ('TOPPADDING', (0,0), (-1,-1), 1),
+        ('LEFTPADDING', (0,0), (-1,-1), 0),
+        ('RIGHTPADDING', (0,0), (-1,-1), 0),
+    ]))
+    story.append(meta_table)
+    story.append(Spacer(1, 4))
+
+    # ── 3. ITEMS TABLE ────────────────────────────────────────────────────
+    col_hdrs = [
+        Paragraph("SNo", ps("th1", 7, T_BOLD)),
+        Paragraph(f"Description / <font face='{TAMIL_BOLD}'>விவரம்</font>", ps("th2", 7, T_BOLD)),
+        Paragraph("Qty", ps("th3", 7, T_BOLD, align=TA_RIGHT)),
+        Paragraph("Rate", ps("th4", 7, T_BOLD, align=TA_RIGHT)),
+        Paragraph("Amount", ps("th5", 7, T_BOLD, align=TA_RIGHT))
+    ]
+    table_data = [col_hdrs]
+    
+    from routes.translate import _to_tamil
+
+    for idx, item in enumerate(items):
+        english_name = item.get("description", "")
+        tamil_name = ""
+        try:
+            tamil_name = _to_tamil(english_name)
+        except Exception:
+            pass
+
+        # Build bilingual description
+        if tamil_name and tamil_name != english_name:
+            desc_html = f"<font face='{T_BOLD}' size=7.5>{english_name}</font><br/><font face='{TAMIL_REG}' size=6.5 color='gray'>{tamil_name}</font>"
+        else:
+            desc_html = f"<font face='{T_BOLD}' size=7.5>{english_name}</font>"
+
+        qty = _fval(item.get("quantity"))
+        rate = _fval(item.get("rate"))
+        amount = _fval(item.get("amount"), default=qty * rate)
+
+        # Format Qty: check if whole number
+        qty_str = str(int(qty)) if qty % 1 == 0 else f"{qty:.1f}"
+
+        row_cells = [
+            Paragraph(str(idx + 1), ps("td1", 7)),
+            Paragraph(desc_html, ps("td2", 7.5, leading=8.5)),
+            Paragraph(qty_str, ps("td3", 7, align=TA_RIGHT)),
+            Paragraph(f"{rate:.2f}", ps("td4", 7, align=TA_RIGHT)),
+            Paragraph(f"{amount:.2f}", ps("td5", 7, T_BOLD, align=TA_RIGHT))
+        ]
+        table_data.append(row_cells)
+
+    items_table = Table(table_data, colWidths=[15, 95, 25, 30, 39])
+    items_table.setStyle(TableStyle([
+        ('VALIGN', (0,0), (-1,-1), 'TOP'),
+        ('TOPPADDING', (0,0), (-1,-1), 3),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+        ('LEFTPADDING', (0,0), (-1,-1), 0),
+        ('RIGHTPADDING', (0,0), (-1,-1), 0),
+        ('LINEABOVE', (0,0), (-1,0), 0.5, colors.black),
+        ('LINEBELOW', (0,0), (-1,0), 0.5, colors.black),
+        ('LINEBELOW', (0,-1), (-1,-1), 0.5, colors.black),
+    ]))
+    story.append(items_table)
+    story.append(Spacer(1, 6))
+
+    # ── 4. SUMMARY ────────────────────────────────────────────────────────
+    total_qty = sum(_fval(item.get("quantity")) for item in items)
+    total_qty_str = str(int(total_qty)) if total_qty % 1 == 0 else f"{total_qty:.1f}"
+    
+    summary_data = [
+        [Paragraph(f"No. of Items / <font face='{TAMIL_REG}'>பொருட்களின் எண்ணிக்கை:</font>", ps("s1", 6.5, T_REG)), Paragraph(str(len(items)), ps("s2", 7, T_BOLD, align=TA_RIGHT))],
+        [Paragraph(f"Total Qty / <font face='{TAMIL_REG}'>மொத்த அளவு:</font>", ps("s3", 6.5, T_REG)), Paragraph(total_qty_str, ps("s4", 7, T_BOLD, align=TA_RIGHT))]
+    ]
+    summary_table = Table(summary_data, colWidths=[150, 54])
+    summary_table.setStyle(TableStyle([
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('TOPPADDING', (0,0), (-1,-1), 1),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 1),
+        ('LEFTPADDING', (0,0), (-1,-1), 0),
+        ('RIGHTPADDING', (0,0), (-1,-1), 0),
+    ]))
+    story.append(summary_table)
+    story.append(Spacer(1, 4))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=colors.black, spaceAfter=4))
+
+    # ── 5. GRAND TOTAL ────────────────────────────────────────────────────
+    grand_total = _fval(hdr.get("grand_total"))
+    total_data = [
+        [Paragraph(f"GRAND TOTAL / <font face='{TAMIL_BOLD}'>மொத்த தொகை</font>", ps("gt1", 8.5, T_BOLD)),
+         Paragraph(f"₹ {grand_total:.2f}", ps("gt2", 10, T_BOLD, align=TA_RIGHT))]
+    ]
+    total_table = Table(total_data, colWidths=[120, 84])
+    total_table.setStyle(TableStyle([
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('TOPPADDING', (0,0), (-1,-1), 2),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 2),
+        ('LEFTPADDING', (0,0), (-1,-1), 0),
+        ('RIGHTPADDING', (0,0), (-1,-1), 0),
+    ]))
+    story.append(total_table)
+    story.append(Spacer(1, 4))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=colors.black, spaceAfter=4))
+
+    # ── 6. PAYMENT MODE & FOOTER ─────────────────────────────────────────
+    payment_mode = hdr.get("payment_mode", "Cash").upper()
+    story.append(Paragraph(f"Payment Mode : {payment_mode}", ps("pm", 7.5, T_BOLD)))
+    story.append(Spacer(1, 6))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=colors.black, spaceAfter=8))
+    
+    story.append(Paragraph("THANK YOU! VISIT AGAIN!", ps("f1", 8.5, T_BOLD, align=TA_CENTER)))
+    story.append(Paragraph(f"<font face='{TAMIL_BOLD}'>நன்றி! மீண்டும் வருக!</font>", ps("f2", 8, T_BOLD, align=TA_CENTER)))
+
+    doc.build(story)
+    return buf.getvalue()
+
+
 # ---------------------------------------------------------------------------
 # POST /invoice-export/save  (customer bill image → erp_billing_system bucket)
 # ---------------------------------------------------------------------------
@@ -376,7 +612,7 @@ def save_invoice_image():
 
     Body (JSON):
     {
-      "invoice_number": "2026AUG08A161",
+      "invoice_number": "2026AUG121325A",
       "image_data": "<base64-encoded PNG/JPEG>",
       "is_company_invoice": false     ← always false; company uses /generate-company
     }
@@ -404,8 +640,30 @@ def save_invoice_image():
         return jsonify({"success": False, "message": "image_data is not valid base64"}), 400
 
     try:
-        pdf_bytes    = _image_bytes_to_pdf(image_bytes)
-        bucket       = BUCKET_MAP[is_company]
+        if not is_company:
+            try:
+                print(f"[save_invoice_image] Generating user bill PDF for {invoice_number} via server-side generator...")
+                pdf_bytes = _generate_user_bill_pdf(invoice_number)
+            except Exception as ex:
+                print(f"[save_invoice_image] Server-side PDF generation failed: {ex}. Falling back to screenshot.")
+                pdf_bytes = _image_bytes_to_pdf(image_bytes)
+        else:
+            pdf_bytes = _image_bytes_to_pdf(image_bytes)
+        
+        # Check if salesperson bill
+        is_salesperson = False
+        try:
+            sb = _get_supabase()
+            resp = sb.table("erp_billing_system").select("through").eq("bill_no", invoice_number).execute().data
+            if resp and resp[0].get("through"):
+                is_salesperson = True
+        except Exception as e:
+            print(f"[save_invoice_image] Error checking salesperson status: {e}")
+            
+        if is_salesperson:
+            bucket = "salesperson_bill" if is_company else "salesperson_bill_user"
+        else:
+            bucket = BUCKET_MAP[is_company]
         file_name    = f"{invoice_number}.pdf"
 
         sb = _get_supabase()
@@ -464,13 +722,15 @@ def generate_company_invoice(invoice_number: str):
     }
     """
     print(f"[generate_company_invoice] REQUEST received for invoice: {invoice_number}")
+    payload = request.get_json(silent=True) or {}
     try:
         pdf_bytes = _generate_company_invoice_pdf(invoice_number)
         print(f"[generate_company_invoice] PDF generated successfully: {len(pdf_bytes)} bytes")
-    except ValueError:
-        # DB record not found — try to build from request body fallback
-        print(f"[generate_company_invoice] DB record not found for: {invoice_number}")
-        payload = request.get_json(silent=True) or {}
+    except Exception as db_exc:
+        # DB row missing OR Supabase unreachable (network error, missing .env,
+        # etc.) — always try the request-body payload as fallback before failing.
+        import traceback; traceback.print_exc()
+        print(f"[generate_company_invoice] DB-based generation failed for: {invoice_number}: {db_exc}")
         if not payload:
             print(f"[generate_company_invoice] ERROR: No fallback data in request body")
             return jsonify({
@@ -483,28 +743,36 @@ def generate_company_invoice(invoice_number: str):
         except Exception as e:
             import traceback; traceback.print_exc()
             return jsonify({"success": False, "message": f"Fallback PDF error: {str(e)}"}), 500
-    except Exception as e:
-        import traceback; traceback.print_exc()
-        print(f"[generate_company_invoice] ERROR generating PDF: {str(e)}")
-        return jsonify({"success": False, "message": f"Error: {str(e)}"}), 500
 
     try:
         file_name = f"{invoice_number}.pdf"
         sb = _get_supabase()
-        print(f"[generate_company_invoice] Uploading to bucket: erp_billing_system_company")
-        sb.storage.from_("erp_billing_system_company").upload(
+        
+        # Check if salesperson bill
+        is_salesperson = False
+        try:
+            resp = sb.table("erp_billing_system").select("through").eq("bill_no", invoice_number).execute().data
+            if resp and resp[0].get("through"):
+                is_salesperson = True
+        except Exception as e:
+            print(f"[generate_company_invoice] Error checking salesperson status: {e}")
+            
+        bucket = "salesperson_bill" if is_salesperson else "erp_billing_system_company"
+        
+        print(f"[generate_company_invoice] Uploading to bucket: {bucket}")
+        sb.storage.from_(bucket).upload(
             path=file_name,
             file=pdf_bytes,
             file_options={"content-type": "application/pdf", "upsert": "true"},
         )
-        public_url = sb.storage.from_("erp_billing_system_company").get_public_url(file_name)
-        print(f"[generate_company_invoice] SUCCESS: Uploaded {file_name} → erp_billing_system_company")
+        public_url = sb.storage.from_(bucket).get_public_url(file_name)
+        print(f"[generate_company_invoice] SUCCESS: Uploaded {file_name} → {bucket}")
 
         return jsonify({
             "success":   True,
             "message":   "Company invoice PDF generated and uploaded",
             "file_name": file_name,
-            "bucket":    "erp_billing_system_company",
+            "bucket":    bucket,
             "url":       public_url,
             "pdf_size":  len(pdf_bytes),
         }), 201
@@ -590,13 +858,13 @@ def _generate_company_invoice_pdf_from_payload(invoice_no: str, payload: dict) -
                Paragraph("<b>RATE (₹)</b>", right_style), Paragraph("<b>AMOUNT (₹)</b>", right_style)]
     table_data = [col_hdr]
     for row in items:
-        amt = float(row.get("amount", 0))
+        amt = _fval(row.get("amount"))
         table_data.append([
-            Paragraph(str(row.get("sno", "")), center_style),
-            Paragraph(str(row.get("description", "")), normal_style),
-            Paragraph(str(row.get("unit", "Nos")), center_style),
-            Paragraph(str(row.get("quantity", "")), center_style),
-            Paragraph(f"{float(row.get('rate', 0)):.2f}", right_style),
+            Paragraph(str(row.get("sno", "") if row.get("sno") is not None else ""), center_style),
+            Paragraph(str(row.get("description", "") or ""), normal_style),
+            Paragraph(str(row.get("unit", "Nos") or "Nos"), center_style),
+            Paragraph(str(row.get("quantity", "")) if row.get("quantity") is not None else "0", center_style),
+            Paragraph(f"{_fval(row.get('rate')):.2f}", right_style),
             Paragraph(f"{amt:.2f}", right_style),
         ])
     items_tbl = Table(table_data, colWidths=[10*mm, 70*mm, 20*mm, 20*mm, 25*mm, 30*mm])
@@ -609,8 +877,8 @@ def _generate_company_invoice_pdf_from_payload(invoice_no: str, payload: dict) -
     story.append(items_tbl)
     story.append(Spacer(1, 6))
 
-    total = float(hdr.get("total_amount", 0))
-    words = hdr.get("amount_in_words", "")
+    total = _fval(hdr.get("total_amount"))
+    words = hdr.get("amount_in_words") or ""
     total_data = [["", "", "", "",
         Paragraph("<b>GRAND TOTAL</b>", ParagraphStyle("gt", fontSize=11, fontName=FONT_BOLD, textColor=colors.white, alignment=TA_RIGHT)),
         Paragraph(f"<b>₹ {total:.2f}</b>", ParagraphStyle("gtv", fontSize=11, fontName=FONT_BOLD, textColor=colors.white, alignment=TA_RIGHT))]]
@@ -672,7 +940,7 @@ def list_invoices(bucket: str):
 @invoice_export_bp.get("/download/<bucket>/<invoice_number>")
 def get_invoice_url(bucket: str, invoice_number: str):
     """Returns a signed URL (60 min) for downloading a specific PDF."""
-    if bucket not in ("erp_billing_system_company", "erp_billing_system"):
+    if bucket not in ("erp_billing_system_company", "erp_billing_system", "salesperson_bill", "salesperson_bill_user"):
         return jsonify({"success": False, "message": "Invalid bucket name"}), 400
 
     try:

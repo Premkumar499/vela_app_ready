@@ -41,9 +41,14 @@ class _QuantityDialogState extends State<QuantityDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final isNarrow = MediaQuery.sizeOf(context).width < 400;
     return Dialog(
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: isNarrow ? 16 : 40,
+        vertical: isNarrow ? 16 : 24,
+      ),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -63,47 +68,57 @@ class _QuantityDialogState extends State<QuantityDialog> {
             ),
             const Divider(),
             const SizedBox(height: 24),
-            // Quantity control row
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                // Minus button
-                _QuantityButton(
-                  icon: Icons.remove,
-                  color: AppTheme.error,
-                  onPressed: _decrement,
-                  enabled: _quantity - widget.step >= widget.minQuantity,
-                ),
-                const SizedBox(width: 24),
-                // Current quantity display
-                Container(
-                  width: 120,
-                  height: 64,
-                  decoration: BoxDecoration(
-                    border: Border.all(color: AppTheme.primary, width: 2),
-                    borderRadius: BorderRadius.circular(8),
-                    color: AppTheme.tableHeaderColor,
-                  ),
-                  alignment: Alignment.center,
-                  child: Text(
-                    _quantity % 1 == 0
-                        ? _quantity.toInt().toString()
-                        : _quantity.toStringAsFixed(2),
-                    style: const TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.w700,
-                      color: AppTheme.primary,
+            // Quantity control row — compact on narrow phones
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.maxWidth < 320;
+                final btnSize = compact ? 44.0 : 56.0;
+                final boxWidth = compact ? 96.0 : 120.0;
+                final gap = compact ? 12.0 : 24.0;
+                return Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // Minus button
+                    _QuantityButton(
+                      icon: Icons.remove,
+                      color: AppTheme.error,
+                      size: btnSize,
+                      onPressed: _decrement,
+                      enabled: _quantity - widget.step >= widget.minQuantity,
                     ),
-                  ),
-                ),
-                const SizedBox(width: 24),
-                // Plus button
-                _QuantityButton(
-                  icon: Icons.add,
-                  color: AppTheme.primary,
-                  onPressed: _increment,
-                ),
-              ],
+                    SizedBox(width: gap),
+                    // Current quantity display
+                    Container(
+                      width: boxWidth,
+                      height: 64,
+                      decoration: BoxDecoration(
+                        border: Border.all(color: AppTheme.primary, width: 2),
+                        borderRadius: BorderRadius.circular(8),
+                        color: AppTheme.tableHeaderColor,
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        _quantity % 1 == 0
+                            ? _quantity.toInt().toString()
+                            : _quantity.toStringAsFixed(2),
+                        style: const TextStyle(
+                          fontSize: 28,
+                          fontWeight: FontWeight.w700,
+                          color: AppTheme.primary,
+                        ),
+                      ),
+                    ),
+                    SizedBox(width: gap),
+                    // Plus button
+                    _QuantityButton(
+                      icon: Icons.add,
+                      color: AppTheme.primary,
+                      size: btnSize,
+                      onPressed: _increment,
+                    ),
+                  ],
+                );
+              },
             ),
             const SizedBox(height: 24),
             // Preset quick-select buttons
@@ -156,12 +171,14 @@ class _QuantityButton extends StatelessWidget {
   final Color color;
   final VoidCallback onPressed;
   final bool enabled;
+  final double size;
 
   const _QuantityButton({
     required this.icon,
     required this.color,
     required this.onPressed,
     this.enabled = true,
+    this.size = 56,
   });
 
   @override
@@ -173,9 +190,9 @@ class _QuantityButton extends StatelessWidget {
         onTap: enabled ? onPressed : null,
         borderRadius: BorderRadius.circular(8),
         child: SizedBox(
-          width: 56,
-          height: 56,
-          child: Icon(icon, color: Colors.white, size: 32),
+          width: size,
+          height: size,
+          child: Icon(icon, color: Colors.white, size: size * 0.55),
         ),
       ),
     );

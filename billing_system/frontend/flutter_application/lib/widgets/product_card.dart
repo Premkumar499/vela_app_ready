@@ -71,12 +71,12 @@ class ProductCard extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 4),
-                    Row(
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
                       children: [
                         _Chip(product.category, AppTheme.info),
-                        const SizedBox(width: 6),
                         _Chip(product.unit, AppTheme.textSecondary),
-                        const SizedBox(width: 6),
                         _Chip('GST ${product.gst.toInt()}%', AppTheme.success),
                       ],
                     ),

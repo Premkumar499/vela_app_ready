@@ -5,9 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:http/http.dart' as http;
 
+import '../utils/constants.dart';
+
 /// Service to export invoices as images / PDFs
 class InvoiceExportService {
-  static const String baseUrl = 'http://localhost:5000';
+  // Delegates to AppConstants so changing the IP in one place is enough.
+  static String get baseUrl => AppConstants.baseUrl;
 
   /// Capture customer receipt widget as image and upload to erp_billing_system bucket.
   static Future<Map<String, dynamic>> saveInvoiceAsImage({

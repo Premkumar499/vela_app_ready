@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../providers/billing_provider.dart';
 import '../services/api_service.dart';
+import '../services/session_service.dart';
 import '../utils/constants.dart';
 import '../utils/theme.dart';
 
@@ -17,11 +18,22 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   Map<String, dynamic> _summary = {};
   bool _loadingSummary = true;
+  String _userName = '';
 
   @override
   void initState() {
     super.initState();
     _loadSummary();
+    _loadUserName();
+  }
+
+  Future<void> _loadUserName() async {
+    final session = await SessionService.getSession();
+    if (mounted && session != null) {
+      setState(() {
+        _userName = session['full_name'] as String? ?? '';
+      });
+    }
   }
 
   Future<void> _loadSummary() async {
@@ -55,14 +67,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.point_of_sale, size: 22),
-            SizedBox(width: 8),
-            Text('ERP Billing System'),
+            const Icon(Icons.point_of_sale, size: 22),
+            const SizedBox(width: 8),
+            const Flexible(
+              child: Text(
+                'ERP Billing System',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
           ],
         ),
-        actions: const [],
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: IconButton(
+              tooltip: 'Logout',
+              icon: const Icon(Icons.logout_rounded),
+              onPressed: _confirmLogout,
+            ),
+          ),
+        ],
       ),
       body: RefreshIndicator(
         onRefresh: _loadSummary,
@@ -72,7 +99,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _WelcomeBanner(summary: _summary, loading: _loadingSummary),
+              _WelcomeBanner(summary: _summary, loading: _loadingSummary, userName: _userName),
               const SizedBox(height: 20),
               const Text('Quick Actions', style: AppTheme.headingLarge),
               const SizedBox(height: 12),
@@ -129,14 +156,36 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  void _showComingSoon(BuildContext context, String feature) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('$feature – coming in the next release'),
-        backgroundColor: AppTheme.info,
+  Future<void> _confirmLogout() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Logout'),
+        content: const Text('Are you sure you want to logout?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Logout'),
+          ),
+        ],
       ),
     );
+
+    if (confirmed != true || !mounted) return;
+
+    await SessionService.clearSession();
+    if (!mounted) return;
+    Navigator.pushNamedAndRemoveUntil(
+      context,
+      AppConstants.routeLogin,
+      (route) => false,
+    );
   }
+
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -146,11 +195,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
 class _WelcomeBanner extends StatelessWidget {
   final Map<String, dynamic> summary;
   final bool loading;
+  final String userName;
 
-  const _WelcomeBanner({required this.summary, required this.loading});
+  const _WelcomeBanner({required this.summary, required this.loading, this.userName = ''});
 
   @override
   Widget build(BuildContext context) {
+    final num? all = summary['all_sales'] is num
+        ? summary['all_sales'] as num
+        : null;
     return Container(
       decoration: BoxDecoration(
         gradient: const LinearGradient(
@@ -171,16 +224,16 @@ class _WelcomeBanner extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Welcome Back!',
+                  'ERP Billing System',
                   style: TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.w700,
                       color: Colors.white),
                 ),
                 const SizedBox(height: 4),
-                const Text(
-                  'ERP Billing System · Prototype',
-                  style: TextStyle(fontSize: 13, color: Colors.white70),
+                Text(
+                  userName.isNotEmpty ? 'Welcome, $userName' : 'ERP Billing System',
+                  style: const TextStyle(fontSize: 13, color: Colors.white70),
                 ),
                 const SizedBox(height: 16),
                 loading
@@ -190,16 +243,16 @@ class _WelcomeBanner extends StatelessWidget {
                         child: CircularProgressIndicator(
                             color: Colors.white, strokeWidth: 2))
                     : Wrap(
-                        spacing: 24,
+                        spacing: 28,
+                        runSpacing: 10,
                         children: [
                           _StatItem(
-                            label: 'Bills Today',
-                            value: '${summary['total_bills'] ?? 0}',
+                            label: 'Total Bills',
+                            value: '${summary['all_bills'] ?? 0}',
                           ),
                           _StatItem(
-                            label: "Today's Sales",
-                            value:
-                                '₹${((summary['total_sales'] ?? 0.0) as double).toStringAsFixed(0)}',
+                            label: 'Total Sales',
+                            value: '₹${all?.toStringAsFixed(0) ?? '0'}',
                           ),
                         ],
                       ),
@@ -251,7 +304,7 @@ class _ActionGrid extends StatelessWidget {
         maxCrossAxisExtent: 260,
         mainAxisSpacing: 12,
         crossAxisSpacing: 12,
-        childAspectRatio: 1.5,
+        mainAxisExtent: 128,
       ),
       itemBuilder: (_, i) => tiles[i],
     );
@@ -295,10 +348,15 @@ class _DashTile extends StatelessWidget {
               ),
               const Spacer(),
               Text(label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style:
                       AppTheme.headingSmall.copyWith(color: AppTheme.textPrimary)),
               const SizedBox(height: 2),
-              Text(subtitle, style: AppTheme.bodySmall),
+              Text(subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTheme.bodySmall),
             ],
           ),
         ),

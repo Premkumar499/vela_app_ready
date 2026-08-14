@@ -54,10 +54,15 @@ class PosSummarySection extends StatelessWidget {
                         parent: anim, curve: Curves.easeOut)),
                     child: FadeTransition(opacity: anim, child: child),
                   ),
-                  child: Text(
-                    '₹${grandTotal.toStringAsFixed(2)}',
-                    key: ValueKey(grandTotal),
-                    style: PosTheme.amountWhite,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '₹${grandTotal.toStringAsFixed(2)}',
+                      key: ValueKey(grandTotal),
+                      maxLines: 1,
+                      style: PosTheme.amountWhite,
+                    ),
                   ),
                 ),
               ],

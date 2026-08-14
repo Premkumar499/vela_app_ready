@@ -26,7 +26,7 @@ def create_app() -> Flask:
         origins=Config.CORS_ORIGINS,
         supports_credentials=False,
         allow_headers=["Content-Type", "Accept", "Authorization"],
-        methods=["GET", "POST", "DELETE", "OPTIONS"],
+        methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     )
 
     # -----------------------------------------------------------------------
@@ -70,7 +70,49 @@ def create_app() -> Flask:
     def internal_error(e):
         return jsonify({"success": False, "message": "Internal server error"}), 500
 
+    start_salesperson_bill_polling(app)
+
     return app
+
+
+def start_salesperson_bill_polling(app):
+    import time
+    import threading
+    import os
+    import sys
+
+    # If debug mode is on, Werkzeug starts two processes. We only run the polling thread
+    # in the child process to avoid duplicate threads running.
+    # However, if we are running under a production WSGI server (like Gunicorn or Waitress)
+    # or the reloader is disabled, we want to run the thread regardless of app.debug.
+    is_reloader_parent = app.debug and os.environ.get("WERKZEUG_RUN_MAIN") != "true"
+    is_flask_or_direct = any(x in os.path.basename(sys.argv[0]).lower() for x in ["app.py", "flask"])
+
+    if is_reloader_parent and is_flask_or_direct:
+        return
+
+    def poll_loop():
+        # Delay start slightly to allow the server to boot up
+        time.sleep(3)
+        print("[SalespersonBillPolling] Background polling thread started.", flush=True)
+        while True:
+            try:
+                from services.salesperson_bill_service import salesperson_bill_service
+                pending_bills = salesperson_bill_service.list_pending()
+                if pending_bills:
+                    print(f"[SalespersonBillPolling] Found {len(pending_bills)} pending salesperson bills.", flush=True)
+                    for row in pending_bills:
+                        bill_id = row.get("id")
+                        if bill_id:
+                            print(f"[SalespersonBillPolling] Auto-processing bill ID: {bill_id}", flush=True)
+                            result = salesperson_bill_service.push(bill_id)
+                            print(f"[SalespersonBillPolling] Auto-processed result: {result}", flush=True)
+            except Exception as e:
+                print(f"[SalespersonBillPolling] Error in polling loop: {e}", flush=True)
+            time.sleep(4)  # Poll every 4 seconds
+
+    thread = threading.Thread(target=poll_loop, daemon=True)
+    thread.start()
 
 
 # ---------------------------------------------------------------------------

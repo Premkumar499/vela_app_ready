@@ -5,11 +5,13 @@ import '../services/invoice_export_service.dart';
 class BilingualBillDashboard extends StatefulWidget {
   final Map<String, dynamic> receiptData;
   final VoidCallback onClose;
+  final bool autoSave;
 
   const BilingualBillDashboard({
     super.key,
     required this.receiptData,
     required this.onClose,
+    this.autoSave = true,
   });
 
   @override
@@ -32,31 +34,33 @@ class _BilingualBillDashboardState extends State<BilingualBillDashboard> {
   void initState() {
     super.initState();
     _loadFromReceiptData(widget.receiptData);
-    
+
     // Schedule auto-save after widget is fully built
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       print('[BilingualBillDashboard] PostFrameCallback triggered');
-      
+
       await _translateAll();
       print('[BilingualBillDashboard] Translation complete, bill_no: $_billNo');
-      
-      // Small delay to ensure the widget is fully painted after translation
-      await Future.delayed(const Duration(milliseconds: 400));
-      print('[BilingualBillDashboard] Delay complete, calling _autoSaveBoth');
-      
-      await _autoSaveBoth();  // MUST await to catch errors!
-      print('[BilingualBillDashboard] _autoSaveBoth completed');
+
+      if (widget.autoSave) {
+        // Small delay to ensure the widget is fully painted after translation
+        await Future.delayed(const Duration(milliseconds: 400));
+        print('[BilingualBillDashboard] Delay complete, calling _autoSaveBoth');
+
+        await _autoSaveBoth(); // MUST await to catch errors!
+        print('[BilingualBillDashboard] _autoSaveBoth completed');
+      }
     });
   }
 
   void _loadFromReceiptData(Map<String, dynamic> data) {
-    final invoice  = (data['invoice']  as Map<String, dynamic>?) ?? {};
-    final payment  = (data['payment']  as Map<String, dynamic>?) ?? {};
-    final rawItems = (data['items']    as List<dynamic>?)         ?? [];
+    final invoice = (data['invoice'] as Map<String, dynamic>?) ?? {};
+    final payment = (data['payment'] as Map<String, dynamic>?) ?? {};
+    final rawItems = (data['items'] as List<dynamic>?) ?? [];
 
-    _billNo      = invoice['bill_no']?.toString() ?? '';
-    _date        = invoice['date']?.toString()    ?? '';
-    _time        = invoice['time']?.toString()    ?? '';
+    _billNo = invoice['bill_no']?.toString() ?? '';
+    _date = invoice['date']?.toString() ?? '';
+    _time = invoice['time']?.toString() ?? '';
     _paymentMode = payment['method']?.toString().toUpperCase() ?? 'CASH';
 
     _items = rawItems.map((e) {
@@ -66,14 +70,15 @@ class _BilingualBillDashboardState extends State<BilingualBillDashboard> {
         if (v is num) return v.toDouble();
         return double.tryParse(v.toString()) ?? 0.0;
       }
+
       return {
-        'description':      m['product_name']?.toString() ?? '',
+        'description': m['product_name']?.toString() ?? '',
         'descriptionTamil': '',
-        'qty':      parseNum(m['qty']),
-        'rate':     parseNum(m['rate']),
-        'weight':   0.0,
-        'amount':   m['amount'],
-        'unit':     m['unit']?.toString() ?? '',
+        'qty': parseNum(m['qty']),
+        'rate': parseNum(m['rate']),
+        'weight': 0.0,
+        'amount': m['amount'],
+        'unit': m['unit']?.toString() ?? '',
         'discount': m['discount'] ?? 0,
       };
     }).toList();
@@ -83,12 +88,13 @@ class _BilingualBillDashboardState extends State<BilingualBillDashboard> {
     final toTranslate = <int, String>{};
     for (var i = 0; i < _items.length; i++) {
       final ta = _items[i]['descriptionTamil'] as String? ?? '';
-      if (ta.isEmpty) toTranslate[i] = _items[i]['description'] as String? ?? '';
+      if (ta.isEmpty)
+        toTranslate[i] = _items[i]['description'] as String? ?? '';
     }
     if (toTranslate.isEmpty) return;
     setState(() => _isTranslating = true);
     final indices = toTranslate.keys.toList();
-    final texts   = toTranslate.values.toList();
+    final texts = toTranslate.values.toList();
     try {
       final translated = await ApiService.translateToTamil(texts);
       if (!mounted) return;
@@ -108,7 +114,8 @@ class _BilingualBillDashboardState extends State<BilingualBillDashboard> {
   /// company invoice → erp_billing_system_company (server-side PDF from DB).
   Future<void> _autoSaveBoth() async {
     if (_autoSaved || _billNo.isEmpty || !mounted) {
-      print('[BilingualBillDashboard] _autoSaveBoth skipped: autoSaved=$_autoSaved, billNo=$_billNo, mounted=$mounted');
+      print(
+          '[BilingualBillDashboard] _autoSaveBoth skipped: autoSaved=$_autoSaved, billNo=$_billNo, mounted=$mounted');
       return;
     }
     _autoSaved = true;
@@ -123,10 +130,12 @@ class _BilingualBillDashboardState extends State<BilingualBillDashboard> {
         invoiceNumber: _billNo,
         isCompanyInvoice: false,
       );
-      print('[BilingualBillDashboard] Customer bill result: ${customerResult['success']}, message: ${customerResult['message']}');
+      print(
+          '[BilingualBillDashboard] Customer bill result: ${customerResult['success']}, message: ${customerResult['message']}');
 
       if (!mounted) {
-        print('[BilingualBillDashboard] Widget unmounted after customer bill, stopping');
+        print(
+            '[BilingualBillDashboard] Widget unmounted after customer bill, stopping');
         return;
       }
 
@@ -135,14 +144,19 @@ class _BilingualBillDashboardState extends State<BilingualBillDashboard> {
       await Future.delayed(const Duration(milliseconds: 500));
 
       // 2. Company invoice: server-side PDF from DB → erp_billing_system_company bucket
-      print('[BilingualBillDashboard] Step 2: Calling generateCompanyInvoice for: $_billNo');
-      final companyResult = await InvoiceExportService.generateCompanyInvoice(_billNo);
-      print('[BilingualBillDashboard] Company invoice result: ${companyResult['success']}, message: ${companyResult['message']}');
+      print(
+          '[BilingualBillDashboard] Step 2: Calling generateCompanyInvoice for: $_billNo');
+      final companyResult =
+          await InvoiceExportService.generateCompanyInvoice(_billNo);
+      print(
+          '[BilingualBillDashboard] Company invoice result: ${companyResult['success']}, message: ${companyResult['message']}');
 
       if (companyResult['success'] != true) {
-        print('[BilingualBillDashboard] ❌ ERROR: Company invoice failed: ${companyResult['message']}');
+        print(
+            '[BilingualBillDashboard] ❌ ERROR: Company invoice failed: ${companyResult['message']}');
       } else {
-        print('[BilingualBillDashboard] ✅ SUCCESS: Company invoice uploaded to bucket');
+        print(
+            '[BilingualBillDashboard] ✅ SUCCESS: Company invoice uploaded to bucket');
       }
     } catch (e, stackTrace) {
       print('[BilingualBillDashboard] ❌ EXCEPTION in _autoSaveBoth: $e');
@@ -168,10 +182,12 @@ class _BilingualBillDashboardState extends State<BilingualBillDashboard> {
     ));
   }
 
-  double get _totalQty    => _items.fold(0.0, (s, i) => s + (i['qty']    as double));
-  double get _totalWeight => _items.fold(0.0, (s, i) => s + (i['weight'] as double));
-  double get _totalAmount => _items.fold(0.0, (s, i) => s + ((i['qty'] as double) * (i['rate'] as double)));
-  int    get _totalItems  => _items.length;
+  double get _totalQty => _items.fold(0.0, (s, i) => s + (i['qty'] as double));
+  double get _totalWeight =>
+      _items.fold(0.0, (s, i) => s + (i['weight'] as double));
+  double get _totalAmount => _items.fold(
+      0.0, (s, i) => s + ((i['qty'] as double) * (i['rate'] as double)));
+  int get _totalItems => _items.length;
 
   @override
   Widget build(BuildContext context) {
@@ -188,14 +204,24 @@ class _BilingualBillDashboardState extends State<BilingualBillDashboard> {
           children: [
             const Icon(Icons.receipt_long, color: Colors.blueAccent, size: 26),
             const SizedBox(width: 10),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Receipt Preview',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white)),
-                Text('Bill · $_billNo',
-                    style: TextStyle(color: Colors.grey.shade400, fontSize: 11)),
-              ],
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Receipt Preview',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                          color: Colors.white)),
+                  Text('Bill · $_billNo',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style:
+                          TextStyle(color: Colors.grey.shade400, fontSize: 11)),
+                ],
+              ),
             ),
           ],
         ),
@@ -206,7 +232,8 @@ class _BilingualBillDashboardState extends State<BilingualBillDashboard> {
               child: SizedBox(
                 width: 20,
                 height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: Colors.white),
               ),
             )
           else
@@ -230,43 +257,52 @@ class _BilingualBillDashboardState extends State<BilingualBillDashboard> {
           const SizedBox(width: 8),
           TextButton.icon(
             onPressed: widget.onClose,
-            icon: const Icon(Icons.check_circle_outline, color: Colors.greenAccent, size: 18),
-            label: const Text('Done', style: TextStyle(color: Colors.greenAccent)),
+            icon: const Icon(Icons.check_circle_outline,
+                color: Colors.greenAccent, size: 18),
+            label:
+                const Text('Done', style: TextStyle(color: Colors.greenAccent)),
           ),
           const SizedBox(width: 8),
         ],
       ),
       body: Container(
-            color: const Color(0xFF0F172A),
-            child: Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (_isTranslating)
-                      const Padding(
-                        padding: EdgeInsets.only(bottom: 12),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.blueAccent),
-                            ),
-                            SizedBox(width: 8),
-                            Text('Translating items to Tamil...',
-                                style: TextStyle(color: Colors.white70, fontSize: 12)),
-                          ],
+        color: const Color(0xFF0F172A),
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_isTranslating)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 12),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.blueAccent),
                         ),
-                      ),
-                    _buildThermalReceipt(),
-                  ],
+                        SizedBox(width: 8),
+                        Text('Translating items to Tamil...',
+                            style:
+                                TextStyle(color: Colors.white70, fontSize: 12)),
+                      ],
+                    ),
+                  ),
+                // Scale the fixed-width (380px) receipt down so it fits
+                // narrow phones instead of being clipped at the edges.
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: _buildThermalReceipt(),
                 ),
-              ),
+              ],
             ),
           ),
+        ),
+      ),
     );
   }
 
@@ -300,7 +336,11 @@ class _BilingualBillDashboardState extends State<BilingualBillDashboard> {
                   const SizedBox(height: 8),
                   const Center(
                     child: Text('INVOICE / CASH BILL',
-                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, letterSpacing: 1.5, color: Colors.black87)),
+                        style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1.5,
+                            color: Colors.black87)),
                   ),
                   const SizedBox(height: 8),
                   _divider('-'),
@@ -326,7 +366,10 @@ class _BilingualBillDashboardState extends State<BilingualBillDashboard> {
                   _divider('='),
                   const SizedBox(height: 12),
                   Text('Payment Mode : $_paymentMode',
-                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black87)),
+                      style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black87)),
                   const SizedBox(height: 12),
                   _divider('-'),
                   const SizedBox(height: 20),
@@ -334,10 +377,16 @@ class _BilingualBillDashboardState extends State<BilingualBillDashboard> {
                     child: Column(
                       children: [
                         Text('THANK YOU! VISIT AGAIN!',
-                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.black87)),
+                            style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black87)),
                         SizedBox(height: 4),
                         Text('நன்றி! மீண்டும் வருக!',
-                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black87)),
+                            style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black87)),
                       ],
                     ),
                   ),
@@ -356,16 +405,25 @@ class _BilingualBillDashboardState extends State<BilingualBillDashboard> {
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Center(
-          child: Image.asset('assets/images/logo.jpg', width: 80, height: 80, fit: BoxFit.contain),
+          child: Image.asset('assets/images/logo.jpg',
+              width: 80, height: 80, fit: BoxFit.contain),
         ),
         const SizedBox(height: 10),
         const Text('VELA AGENCY',
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900, letterSpacing: 0.5, color: Colors.black87)),
+            style: TextStyle(
+                fontSize: 26,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.5,
+                color: Colors.black87)),
         const SizedBox(height: 10),
         const Text('மளிகை மொத்த மற்றும் சில்லறை\nவியாபாரம்...',
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black87, height: 1.5)),
+            style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Colors.black87,
+                height: 1.5)),
         const SizedBox(height: 8),
         const Text('பர்கூர் ரோடு, வெள்ளை பிள்ளையார்\nகோவில், அந்தியூர்.',
             textAlign: TextAlign.center,
@@ -382,15 +440,24 @@ class _BilingualBillDashboardState extends State<BilingualBillDashboard> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('Bill No : $_billNo',
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black87)),
+                  style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87)),
               const SizedBox(height: 6),
               Text('Time    : $_time',
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black87)),
+                  style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87)),
             ],
           ),
         ),
         Text('Date : $_date',
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black87)),
+            style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: Colors.black87)),
       ],
     );
   }
@@ -398,11 +465,44 @@ class _BilingualBillDashboardState extends State<BilingualBillDashboard> {
   Widget _tableHeader() {
     return const Row(
       children: [
-        SizedBox(width: 28, child: Text('SNo', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87))),
-        Expanded(flex: 4, child: Text('Description / விவரம்', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87))),
-        SizedBox(width: 36, child: Text('Qty', textAlign: TextAlign.right, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87))),
-        SizedBox(width: 56, child: Text('Rate', textAlign: TextAlign.right, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87))),
-        SizedBox(width: 64, child: Text('Amount', textAlign: TextAlign.right, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87))),
+        SizedBox(
+            width: 28,
+            child: Text('SNo',
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87))),
+        Expanded(
+            flex: 4,
+            child: Text('Description / விவரம்',
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87))),
+        SizedBox(
+            width: 36,
+            child: Text('Qty',
+                textAlign: TextAlign.right,
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87))),
+        SizedBox(
+            width: 56,
+            child: Text('Rate',
+                textAlign: TextAlign.right,
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87))),
+        SizedBox(
+            width: 64,
+            child: Text('Amount',
+                textAlign: TextAlign.right,
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87))),
       ],
     );
   }
@@ -410,12 +510,12 @@ class _BilingualBillDashboardState extends State<BilingualBillDashboard> {
   Widget _itemsList() {
     return Column(
       children: List.generate(_items.length, (i) {
-        final item   = _items[i];
-        final en     = item['description'] as String? ?? '';
-        final ta     = item['descriptionTamil'] as String? ?? '';
-        final qty    = item['qty']  as double;
-        final rate   = item['rate'] as double;
-        final amt    = item['amount'] ?? (qty * rate);
+        final item = _items[i];
+        final en = item['description'] as String? ?? '';
+        final ta = item['descriptionTamil'] as String? ?? '';
+        final qty = item['qty'] as double;
+        final rate = item['rate'] as double;
+        final amt = item['amount'] ?? (qty * rate);
         final isLast = i == _items.length - 1;
         return Column(
           children: [
@@ -424,30 +524,68 @@ class _BilingualBillDashboardState extends State<BilingualBillDashboard> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  SizedBox(width: 28, child: Text('${i + 1}', style: const TextStyle(fontSize: 11, color: Colors.black87))),
+                  SizedBox(
+                      width: 28,
+                      child: Text('${i + 1}',
+                          style: const TextStyle(
+                              fontSize: 11, color: Colors.black87))),
                   Expanded(
                     flex: 4,
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        if (_receiptLanguage == 'english' || _receiptLanguage == 'bilingual')
-                          Text(en, style: const TextStyle(fontSize: 11, color: Colors.black87, fontWeight: FontWeight.w500)),
-                        if (_receiptLanguage == 'bilingual' && ta.isNotEmpty) const SizedBox(height: 2),
-                        if (_receiptLanguage == 'tamil' || (_receiptLanguage == 'bilingual' && ta.isNotEmpty))
+                        if (_receiptLanguage == 'english' ||
+                            _receiptLanguage == 'bilingual')
+                          Text(en,
+                              style: const TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.black87,
+                                  fontWeight: FontWeight.w500)),
+                        if (_receiptLanguage == 'bilingual' && ta.isNotEmpty)
+                          const SizedBox(height: 2),
+                        if (_receiptLanguage == 'tamil' ||
+                            (_receiptLanguage == 'bilingual' && ta.isNotEmpty))
                           Text(
-                            _receiptLanguage == 'tamil' ? (ta.isNotEmpty ? ta : en) : ta,
+                            _receiptLanguage == 'tamil'
+                                ? (ta.isNotEmpty ? ta : en)
+                                : ta,
                             style: TextStyle(
                               fontSize: 10,
-                              color: _receiptLanguage == 'tamil' ? Colors.black87 : Colors.black54,
-                              fontWeight: _receiptLanguage == 'tamil' ? FontWeight.w500 : FontWeight.normal,
+                              color: _receiptLanguage == 'tamil'
+                                  ? Colors.black87
+                                  : Colors.black54,
+                              fontWeight: _receiptLanguage == 'tamil'
+                                  ? FontWeight.w500
+                                  : FontWeight.normal,
                             ),
                           ),
                       ],
                     ),
                   ),
-                  SizedBox(width: 36, child: Text(qty % 1 == 0 ? qty.toInt().toString() : qty.toStringAsFixed(1), textAlign: TextAlign.right, style: const TextStyle(fontSize: 11, color: Colors.black87))),
-                  SizedBox(width: 56, child: Text(rate.toStringAsFixed(2), textAlign: TextAlign.right, style: const TextStyle(fontSize: 11, color: Colors.black87))),
-                  SizedBox(width: 64, child: Text(amt is double ? amt.toStringAsFixed(2) : '$amt', textAlign: TextAlign.right, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87))),
+                  SizedBox(
+                      width: 36,
+                      child: Text(
+                          qty % 1 == 0
+                              ? qty.toInt().toString()
+                              : qty.toStringAsFixed(1),
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                              fontSize: 11, color: Colors.black87))),
+                  SizedBox(
+                      width: 56,
+                      child: Text(rate.toStringAsFixed(2),
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                              fontSize: 11, color: Colors.black87))),
+                  SizedBox(
+                      width: 64,
+                      child: Text(
+                          amt is double ? amt.toStringAsFixed(2) : '$amt',
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black87))),
                 ],
               ),
             ),
@@ -463,20 +601,37 @@ class _BilingualBillDashboardState extends State<BilingualBillDashboard> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          const Text('No. of Items / பொருட்களின் எண்ணிக்கை:', style: TextStyle(fontSize: 10, color: Colors.black87)),
-          Text('$_totalItems', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.black87)),
+          const Text('No. of Items / பொருட்களின் எண்ணிக்கை:',
+              style: TextStyle(fontSize: 10, color: Colors.black87)),
+          Text('$_totalItems',
+              style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87)),
         ]),
         const SizedBox(height: 4),
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          const Text('Total Qty / மொத்த அளவு:', style: TextStyle(fontSize: 10, color: Colors.black87)),
-          Text(_totalQty % 1 == 0 ? _totalQty.toInt().toString() : _totalQty.toStringAsFixed(1),
-              style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.black87)),
+          const Text('Total Qty / மொத்த அளவு:',
+              style: TextStyle(fontSize: 10, color: Colors.black87)),
+          Text(
+              _totalQty % 1 == 0
+                  ? _totalQty.toInt().toString()
+                  : _totalQty.toStringAsFixed(1),
+              style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87)),
         ]),
         if (_totalWeight > 0) ...[
           const SizedBox(height: 4),
           Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            const Text('Total Weight / மொத்த எடை:', style: TextStyle(fontSize: 10, color: Colors.black87)),
-            Text('${_totalWeight.toStringAsFixed(3)} kg', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.black87)),
+            const Text('Total Weight / மொத்த எடை:',
+                style: TextStyle(fontSize: 10, color: Colors.black87)),
+            Text('${_totalWeight.toStringAsFixed(3)} kg',
+                style: const TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87)),
           ]),
         ],
       ],
@@ -490,22 +645,40 @@ class _BilingualBillDashboardState extends State<BilingualBillDashboard> {
         const Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('GRAND TOTAL', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, letterSpacing: 1.0, color: Colors.black87)),
-            Text('மொத்த தொகை', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.black54)),
+            Text('GRAND TOTAL',
+                style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1.0,
+                    color: Colors.black87)),
+            Text('மொத்த தொகை',
+                style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black54)),
           ],
         ),
         Text('₹ ${_totalAmount.toStringAsFixed(2)}',
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
+            style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.black87)),
       ],
     );
   }
 
-  Widget _divider(String char, {double spacing = 1.0, Color color = Colors.black87}) => Text(
+  Widget _divider(String char,
+          {double spacing = 1.0, Color color = Colors.black87}) =>
+      Text(
         char * 80,
         maxLines: 1,
         softWrap: false,
         overflow: TextOverflow.clip,
-        style: TextStyle(fontSize: 11, letterSpacing: spacing, color: color, fontWeight: FontWeight.w600),
+        style: TextStyle(
+            fontSize: 11,
+            letterSpacing: spacing,
+            color: color,
+            fontWeight: FontWeight.w600),
       );
 }
 

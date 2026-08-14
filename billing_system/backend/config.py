@@ -21,8 +21,8 @@ class Config:
     ]
 
     # Billing
-    # Invoice number format: 2026AUG08A1633  (YYYYMMMDDAHHMM)
-    INVOICE_CONSTANT: str = "A"   # constant letter between date and time
+    # Invoice number format: 2026AUG121325A  (YYYYMMMDDHHMM + constant)
+    INVOICE_CONSTANT: str = "A"   # constant letter at the end of the bill number
 
     # GST slabs supported by the system
     GST_SLABS: list = [0, 5, 12, 18, 28]
@@ -31,7 +31,7 @@ class Config:
     DEFAULT_PRICE_LIST: str = "Retail"
 
     # Company info (printed on bills)
-    COMPANY_NAME: str = "My Shop"
-    COMPANY_ADDRESS: str = "123 Main Street, City - 000000"
-    COMPANY_PHONE: str = "+91 99999 99999"
-    COMPANY_GSTIN: str = "29XXXXX0000X1ZX"
+    COMPANY_NAME: str = "VELA AGENCY"
+    COMPANY_ADDRESS: str = "Burgur Road, Vellai Pillaiyar Kovil, Anthiyur, Tamil Nadu"
+    COMPANY_PHONE: str = "+91 986522355"
+    COMPANY_GSTIN: str = "33BAZPM1155J1ZB"

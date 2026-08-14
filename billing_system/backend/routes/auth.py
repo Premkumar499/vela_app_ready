@@ -57,9 +57,10 @@ def login():
 
         user = rows[0]
 
-        # Only Billing Employees (role_id = 3) can access this system
-        if user.get("role_id") != 3:
-            return jsonify({"success": False, "message": "Access denied. Only Billing Employees can log in."}), 403
+        # Only Admin (role_id = 1), Billing Employees (role_id = 3) and
+        # Stock In-Charge (role_id = 4) can access this system
+        if user.get("role_id") not in (1, 3, 4):
+            return jsonify({"success": False, "message": "Access denied. Only Admin, Billing Employees and Stock In-Charge can log in."}), 403
 
         return jsonify({
             "success": True,
@@ -73,4 +74,6 @@ def login():
         }), 200
 
     except Exception as e:
-        return jsonify({"success": False, "message": f"Server error: {str(e)}"}), 500
+        import logging
+        logging.getLogger(__name__).exception("Login error")
+        return jsonify({"success": False, "message": "Server error. Please try again."}), 500
