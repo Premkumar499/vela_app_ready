@@ -913,6 +913,81 @@ class ApiService {
     }
   }
 
+  // -------------------------------------------------------------------------
+  // Warehouse Manager (read-only: product list, barcodes, stock movements)
+  // -------------------------------------------------------------------------
+
+  /// Fetch the product list with live stock for the warehouse screen.
+  static Future<ApiResult<List<Map<String, dynamic>>>> getWarehouseProducts({
+    String? search,
+  }) async {
+    try {
+      final uri = Uri.parse('${AppConstants.baseUrl}/warehouse/products')
+          .replace(queryParameters: {
+        if (search != null && search.isNotEmpty) 'search': search,
+      });
+      final response = await _client
+          .get(uri, headers: _headers)
+          .timeout(AppConstants.requestTimeout);
+      return _parseMapList(response);
+    } catch (_) {
+      return const ApiResult.err('Cannot reach server to load products.');
+    }
+  }
+
+  /// Fetch the barcode / SKU list for the warehouse screen.
+  static Future<ApiResult<List<Map<String, dynamic>>>> getWarehouseBarcodes({
+    String? search,
+  }) async {
+    try {
+      final uri = Uri.parse('${AppConstants.baseUrl}/warehouse/barcodes')
+          .replace(queryParameters: {
+        if (search != null && search.isNotEmpty) 'search': search,
+      });
+      final response = await _client
+          .get(uri, headers: _headers)
+          .timeout(AppConstants.requestTimeout);
+      return _parseMapList(response);
+    } catch (_) {
+      return const ApiResult.err('Cannot reach server to load barcodes.');
+    }
+  }
+
+  /// Fetch the stock in/out movement history for the warehouse screen.
+  static Future<ApiResult<List<Map<String, dynamic>>>> getStockMovements({
+    String? search,
+    int limit = 200,
+  }) async {
+    try {
+      final uri = Uri.parse(
+          '${AppConstants.baseUrl}/warehouse/stock-movements').replace(
+        queryParameters: {
+          if (search != null && search.isNotEmpty) 'search': search,
+          'limit': '$limit',
+        },
+      );
+      final response = await _client
+          .get(uri, headers: _headers)
+          .timeout(AppConstants.requestTimeout);
+      return _parseMapList(response);
+    } catch (_) {
+      return const ApiResult.err('Cannot reach server to load movements.');
+    }
+  }
+
+  /// Parse a `{success, data: [...]}` response into a list of maps.
+  static ApiResult<List<Map<String, dynamic>>> _parseMapList(
+      http.Response response) {
+    if (response.statusCode == 200) {
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final list = (body['data'] as List<dynamic>? ?? const [])
+          .map((e) => e as Map<String, dynamic>)
+          .toList();
+      return ApiResult.ok(list);
+    }
+    return ApiResult.err(_extractError(response));
+  }
+
   /// Translate a list of texts to Tamil (or [target] language) via the backend.  /// Returns originals unchanged if the API key is not configured.
   static Future<List<String>> translateToTamil(List<String> texts,
       {String target = 'ta'}) async {

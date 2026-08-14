@@ -21,6 +21,7 @@ import 'screens/consolidated_invoice_screen.dart';
 import 'screens/admin_dashboard_screen.dart';
 import 'screens/admin_products_screen.dart';
 import 'screens/admin_customers_screen.dart';
+import 'screens/warehouse_manager_screen.dart';
 import 'utils/constants.dart';
 import 'utils/theme.dart';
 
@@ -109,6 +110,7 @@ class BillingApp extends StatelessWidget {
           AppConstants.routeOrders: (_) => const OrdersScreen(),
           AppConstants.routeSettings: (_) => const SettingsScreen(),
           AppConstants.routeStockOut: (_) => const StockOutScreen(),
+          AppConstants.routeWarehouse: (_) => const WarehouseManagerScreen(),
           '/consolidated-invoice': (_) => const ConsolidatedInvoiceScreen(),
         },
 

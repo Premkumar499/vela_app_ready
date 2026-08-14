@@ -44,6 +44,7 @@ class AppConstants {
   static const String routeBillDetails = '/bill-details';
   static const String routeSettings = '/settings';
   static const String routeStockOut = '/stock-out';
+  static const String routeWarehouse = '/warehouse';
 
   // -------------------------------------------------------------------------
   // Payment types

@@ -54,7 +54,7 @@ class SessionService {
   }
 
   /// Extract the role_id from a session map (1 = Admin, 3 = Billing Employee,
-  /// 4 = Stock In-Charge).
+  /// 4 = Warehouse Manager).
   static int? roleIdOf(Map<String, dynamic>? session) {
     final role = session?['role_id'];
     return role is num ? role.toInt() : null;
@@ -68,7 +68,7 @@ class SessionService {
   static String homeRouteOf(Map<String, dynamic>? session) {
     final role = roleIdOf(session);
     if (role == 1) return AppConstants.routeAdminDashboard;
-    if (role == 4) return AppConstants.routeStockOut;
+    if (role == 4) return AppConstants.routeWarehouse;
     return AppConstants.routeDashboard;
   }
 
