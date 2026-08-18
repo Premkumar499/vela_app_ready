@@ -85,6 +85,73 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
   }
 
+  Future<void> _showUpdatePaymentDialog(Map<String, dynamic> row) async {
+    final rowId = row['id']?.toString() ?? '';
+    final grandTotal = (row['grand_total'] as num?)?.toDouble() ?? 0.0;
+    final currentPaid = (row['amount_paid'] as num?)?.toDouble() ?? 0.0;
+    final controller = TextEditingController(text: currentPaid.toStringAsFixed(2));
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Update Payment Amount'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Grand Total: \u20B9${grandTotal.toStringAsFixed(2)}'),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                  labelText: 'Amount Paid (\u20B9)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final amount = double.tryParse(controller.text);
+                if (amount == null || amount < 0 || amount > grandTotal) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                    content: Text('Please enter a valid amount between 0 and Grand Total'),
+                    backgroundColor: AppTheme.error,
+                  ));
+                  return;
+                }
+                Navigator.pop(context);
+                setState(() => _isLoading = true);
+                final res = await ApiService.updateSalespersonBillPayment(rowId, amount);
+                if (res.success) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                    content: Text('Payment updated successfully'),
+                    backgroundColor: AppTheme.success,
+                  ));
+                  _loadOrders();
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                    content: Text(res.error ?? 'Failed to update payment'),
+                    backgroundColor: AppTheme.error,
+                  ));
+                  setState(() => _isLoading = false);
+                }
+              },
+              child: const Text('Update'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -112,55 +179,6 @@ class _OrdersScreenState extends State<OrdersScreen> {
       ),
       body: Column(
         children: [
-          // Info banner explaining the automatic order flow
-          Container(
-            width: double.infinity,
-            margin: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: AppTheme.primary.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: AppTheme.primary.withValues(alpha: 0.25),
-                width: 1.5,
-              ),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Icon(
-                  Icons.info_outline_rounded,
-                  color: AppTheme.primary,
-                  size: 22,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Automatic Order Process Monitor / தானியங்கி ஆர்டர் செயல்முறை கண்காணிப்பு',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                          color: AppTheme.primary,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Salesperson bills are automatically processed and stored in both the user bill and company bill tables. This screen shows the pending/processing queue for information purposes.\nவிற்பனையாளர் பில்கள் தானியங்கி முறையில் செயலாக்கப்பட்டு பயனர் பில் மற்றும் நிறுவனத்தின் பில் அட்டவணைகளில் சேமிக்கப்படுகின்றன. இந்த திரை தகவல் நோக்கத்திற்காக மட்டுமே தற்போதைய வரிசையைக் காட்டுகிறது.',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: AppTheme.textSecondary,
-                          height: 1.4,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
           // Segment switcher
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -214,7 +232,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                       ),
                       alignment: Alignment.center,
                       child: Text(
-                        'Automated History (${_automatedBills.length})',
+                        'History (${_automatedBills.length})',
                         style: TextStyle(
                           color: _showAutomated
                               ? Colors.white
@@ -257,6 +275,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                   itemBuilder: (_, i) => _OrderTile(
                                     row: _orders[i],
                                     onGenerate: () => _generateBill(_orders[i]),
+                                    onUpdatePayment: () => _showUpdatePaymentDialog(_orders[i]),
                                   ),
                                 ),
                               )),
@@ -332,10 +351,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
 class _OrderTile extends StatelessWidget {
   final Map<String, dynamic> row;
   final VoidCallback onGenerate;
+  final VoidCallback onUpdatePayment;
 
   const _OrderTile({
     required this.row,
     required this.onGenerate,
+    required this.onUpdatePayment,
   });
 
   @override
@@ -345,12 +366,27 @@ class _OrderTile extends StatelessWidget {
     final customer = row['customer_name']?.toString() ?? 'Walk-in Customer';
     final payment = row['payment_type']?.toString() ?? 'Cash';
     final grandTotal = (row['grand_total'] as num?)?.toDouble() ?? 0.0;
+    final amountPaid = (row['amount_paid'] as num?)?.toDouble() ?? 0.0;
+    final balance = (row['balance'] as num?)?.toDouble() ?? (grandTotal - amountPaid);
     final createdAt = row['created_at']?.toString() ?? '';
     final rawItems = row['items'] as List<dynamic>? ?? [];
     final items = rawItems.map((e) {
       final m = e as Map<String, dynamic>;
       return '${m['product_name']} x${m['quantity']}';
     }).toList();
+
+    Color paymentBadgeColor;
+    String paymentStatusText;
+    if (balance <= 0) {
+      paymentBadgeColor = AppTheme.success;
+      paymentStatusText = 'PAID';
+    } else if (amountPaid > 0) {
+      paymentBadgeColor = Colors.orange;
+      paymentStatusText = 'PARTIALLY PAID';
+    } else {
+      paymentBadgeColor = AppTheme.error;
+      paymentStatusText = 'UNPAID';
+    }
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
@@ -373,6 +409,22 @@ class _OrderTile extends StatelessWidget {
                     (row['status']?.toString() ?? 'PENDING').toUpperCase(),
                     style: AppTheme.bodySmall.copyWith(
                       color: row['status'] == 'ERROR' ? AppTheme.error : AppTheme.info,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: paymentBadgeColor.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    paymentStatusText,
+                    style: AppTheme.bodySmall.copyWith(
+                      color: paymentBadgeColor,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
@@ -402,14 +454,37 @@ class _OrderTile extends StatelessWidget {
                 ),
               ],
             ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Text(
+                  'Paid: ${currency.format(amountPaid)} | Balance: ${currency.format(balance)}',
+                  style: AppTheme.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: balance > 0 ? AppTheme.error : AppTheme.success,
+                  ),
+                ),
+              ],
+            ),
             const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.play_arrow, size: 18),
-                label: const Text('Generate Bill'),
-                onPressed: onGenerate,
-              ),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.payment, size: 18),
+                    label: const Text('Update Payment'),
+                    onPressed: onUpdatePayment,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    icon: const Icon(Icons.play_arrow, size: 18),
+                    label: const Text('Generate Bill'),
+                    onPressed: onGenerate,
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -437,6 +512,23 @@ class _AutomatedOrderTile extends StatelessWidget {
     final currency = NumberFormat.currency(symbol: '\u20B9', decimalDigits: 2);
     final items = bill.items.map((it) => '${it.productName} x${it.quantity % 1 == 0 ? it.quantity.toInt() : it.quantity}').toList();
 
+    final grandTotal = bill.grandTotal;
+    final amountPaid = bill.amountPaid;
+    final balance = bill.balance;
+
+    Color paymentBadgeColor;
+    String paymentStatusText;
+    if (balance <= 0) {
+      paymentBadgeColor = AppTheme.success;
+      paymentStatusText = 'PAID';
+    } else if (amountPaid > 0) {
+      paymentBadgeColor = Colors.orange;
+      paymentStatusText = 'PARTIALLY PAID';
+    } else {
+      paymentBadgeColor = AppTheme.error;
+      paymentStatusText = 'UNPAID';
+    }
+
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
       child: Padding(
@@ -457,6 +549,22 @@ class _AutomatedOrderTile extends StatelessWidget {
                     'AUTOMATED',
                     style: AppTheme.bodySmall.copyWith(
                       color: AppTheme.success,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: paymentBadgeColor.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    paymentStatusText,
+                    style: AppTheme.bodySmall.copyWith(
+                      color: paymentBadgeColor,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
@@ -495,9 +603,21 @@ class _AutomatedOrderTile extends StatelessWidget {
                 ),
                 const Spacer(),
                 Text(
-                  currency.format(bill.grandTotal),
+                  currency.format(grandTotal),
                   style: AppTheme.headingMedium
                       .copyWith(color: AppTheme.primary),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Text(
+                  'Paid: ${currency.format(amountPaid)} | Balance: ${currency.format(balance)}',
+                  style: AppTheme.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: balance > 0 ? AppTheme.error : AppTheme.success,
+                  ),
                 ),
               ],
             ),

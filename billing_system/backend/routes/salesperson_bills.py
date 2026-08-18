@@ -32,3 +32,25 @@ def push_bill(bill_id: str):
     result = salesperson_bill_service.push(bill_id)
     status_code = 200 if result.get("success") else 422
     return jsonify(result), status_code
+
+
+@salesperson_bills_bp.patch("/<string:bill_id>/payment")
+def update_payment(bill_id: str):
+    """
+    Update the payment amount for a salesperson bill request.
+    This calculates the new balance and updates the payment.
+    """
+    from flask import request
+    data = request.json or {}
+    amount_paid = data.get("amount_paid")
+    if amount_paid is None:
+        return jsonify({"success": False, "message": "amount_paid is required"}), 400
+    try:
+        amount_paid = float(amount_paid)
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "message": "amount_paid must be a valid number"}), 400
+
+    result = salesperson_bill_service.update_payment(bill_id, amount_paid)
+    status_code = 200 if result.get("success") else 422
+    return jsonify(result), status_code
+

@@ -20,6 +20,8 @@ class Bill {
   final double grandTotal;
   final Map<String, double> gstBreakup;
   final int itemCount;
+  final double amountPaid;
+  final double balance;
 
   const Bill({
     required this.billNumber,
@@ -40,6 +42,8 @@ class Bill {
     required this.grandTotal,
     required this.gstBreakup,
     required this.itemCount,
+    this.amountPaid = 0.0,
+    this.balance = 0.0,
   });
 
   factory Bill.fromJson(Map<String, dynamic> json) {
@@ -60,9 +64,10 @@ class Bill {
       area:          json['area']          as String? ?? '',
       priceList:     json['price_list']    as String? ?? 'Retail',
       remarks:       json['remarks']       as String? ?? '',
-      items: (json['items'] as List<dynamic>)
-          .map((e) => BillItem.fromJson(e as Map<String, dynamic>))
-          .toList(),
+      items: (json['items'] as List<dynamic>?)
+              ?.map((e) => BillItem.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          [],
       subtotal:      (json['subtotal']      as num?)?.toDouble() ?? 0.0,
       gstTotal:      (json['gst_total']     as num?)?.toDouble() ?? 0.0,
       roundOff:      (json['round_off']     as num?)?.toDouble() ?? 0.0,
@@ -70,6 +75,8 @@ class Bill {
       gstBreakup:    gstBreakup,
       itemCount:     json['item_count']    as int? ??
                      (json['items'] as List<dynamic>?)?.length ?? 0,
+      amountPaid:    (json['amount_paid']   as num?)?.toDouble() ?? 0.0,
+      balance:       (json['balance']       as num?)?.toDouble() ?? 0.0,
     );
   }
 
@@ -92,5 +99,8 @@ class Bill {
         'grand_total': grandTotal,
         'gst_breakup': gstBreakup,
         'item_count': itemCount,
+        'amount_paid': amountPaid,
+        'balance': balance,
       };
+
 }

@@ -140,6 +140,7 @@ class BillingService:
         """Lazily load products/customers on first use."""
         if self._products is None:
             self._products = self._load_products_from_db()
+        if self._customers is None:
             self._customers = self._load_customers_from_db()
 
 
@@ -242,25 +243,39 @@ class BillingService:
         )
         try:
             sb = _get_supabase_client()
-            resp = (
-                sb.table("customers")
-                .select("customer_id, name, phone, email, address")
-                .order("name")
-                .execute()
-            )
             customers: list[Customer] = [walk_in]
-            for row in resp.data:
-                name = (row.get("name") or "").strip()
-                if not name:
-                    continue
-                customers.append(Customer(
-                    id=str(row.get("customer_id") or row.get("id")),
-                    name=name,
-                    phone=row.get("phone") or "",
-                    address=row.get("address") or "",
-                    email=row.get("email") or "",
-                    area="",
-                ))
+            
+            # Fetch all customers in batches of 1000 to bypass Supabase default limit
+            offset = 0
+            limit = 1000
+            while True:
+                resp = (
+                    sb.table("customers")
+                    .select("customer_id, name, phone, email, address, area, credit_limit, balance")
+                    .order("name")
+                    .range(offset, offset + limit - 1)
+                    .execute()
+                )
+                if not resp.data:
+                    break
+                for row in resp.data:
+                    name = (row.get("name") or "").strip()
+                    if not name:
+                        continue
+                    customers.append(Customer(
+                        id=str(row.get("customer_id") or row.get("id")),
+                        name=name,
+                        phone=row.get("phone") or "",
+                        address=row.get("address") or "",
+                        email=row.get("email") or "",
+                        area=row.get("area") or "",
+                        credit_limit=float(row.get("credit_limit") or 0.0),
+                        balance=float(row.get("balance") or 0.0),
+                    ))
+                if len(resp.data) < limit:
+                    break
+                offset += limit
+
             print(f"[BillingService] Loaded {len(customers) - 1} customers.")
             return customers
         except Exception as exc:
@@ -332,8 +347,12 @@ class BillingService:
                 phone=row.get("phone") or "",
                 address=row.get("address") or "",
                 email=row.get("email") or "",
+                area=row.get("area") or "",
+                credit_limit=float(row.get("credit_limit") or 0.0),
+                balance=float(row.get("balance") or 0.0),
             )
-            self._customers.append(customer)
+            if self._customers is not None:
+                self._customers.append(customer)
             return {"success": True, "data": customer.to_dict()}
         except Exception as exc:
             import traceback; traceback.print_exc()
@@ -365,6 +384,9 @@ class BillingService:
                 phone=row.get("phone") or "",
                 address=row.get("address") or "",
                 email=row.get("email") or "",
+                area=row.get("area") or "",
+                credit_limit=float(row.get("credit_limit") or 0.0),
+                balance=float(row.get("balance") or 0.0),
             ).to_dict()}
         except Exception as exc:
             import traceback; traceback.print_exc()
@@ -396,11 +418,28 @@ class BillingService:
     def _find_or_create_ref(self, table: str, name_col: str, name: str) -> str:
         """Find a categories/units/brands row by name; create it if missing."""
         sb = _get_supabase_client()
-        resp = sb.table(table).select("id").eq(name_col, name).limit(1).execute()
+        # Map table names to their actual primary key column name in the database
+        id_col = {
+            "categories": "category_id",
+            "units": "unit_id",
+            "brands": "brand_id"
+        }.get(table, "id")
+
+        resp = sb.table(table).select(id_col).eq(name_col, name).limit(1).execute()
         if resp.data:
-            return str(resp.data[0]["id"])
+            return str(resp.data[0][id_col])
         ins = sb.table(table).insert({name_col: name}).execute()
-        return str(ins.data[0]["id"])
+        return str(ins.data[0][id_col])
+
+    def _get_default_warehouse_id(self) -> str:
+        try:
+            sb = _get_supabase_client()
+            resp = sb.table("warehouses").select("warehouse_id").limit(1).execute()
+            if resp.data:
+                return str(resp.data[0]["warehouse_id"])
+        except Exception:
+            pass
+        return "c1a9b73a-7771-4473-8bce-a96fccc79f97"
 
     def _reload_products(self) -> None:
         """Force a fresh product load from the DB on the next access."""
@@ -427,6 +466,7 @@ class BillingService:
             try:
                 sb.table("inventory").insert({
                     "product_id": product_id,
+                    "warehouse_id": self._get_default_warehouse_id(),
                     "current_stock": float(stock),
                     "reserved_stock": 0,
                 }).execute()
@@ -471,6 +511,7 @@ class BillingService:
                 try:
                     sb.table("inventory").insert({
                         "product_id": product_id,
+                        "warehouse_id": self._get_default_warehouse_id(),
                         "current_stock": float(stock),
                         "reserved_stock": 0,
                     }).execute()
@@ -532,6 +573,16 @@ class BillingService:
             total_quantity += qty
         grand_total = float(sum(line_totals, Decimal("0")))
 
+        payload_amount_paid = payload.get("amount_paid")
+        if payload_amount_paid is None:
+            payment_type = payload.get("payment_type", "Cash").upper()
+            if payment_type in ("CASH", "UPI"):
+                amount_paid = grand_total
+            else:
+                amount_paid = 0.0
+        else:
+            amount_paid = float(payload_amount_paid)
+
         bill_header = {
             "business_name":  "VELA AGENCY",
             "bill_no":        bill_number,
@@ -549,6 +600,7 @@ class BillingService:
             "area":           payload.get("area", "") or "",
             "remarks":        payload.get("remarks", "") or "",
             "draft_bill_id":  payload.get("draft_bill_id") or "",
+            "amount_paid":    amount_paid,
         }
 
         def _user_line_rows(parent_id: str) -> list[dict]:
@@ -608,6 +660,7 @@ class BillingService:
                 "area":            payload.get("area", "") or "",
                 "remarks":         payload.get("remarks", "") or "",
                 "draft_bill_id":   payload.get("draft_bill_id") or "",
+                "amount_paid":     amount_paid,
             }
             try:
                 company_resp = sb.table("erp_billing_system_company").insert(company_header).execute()
@@ -877,6 +930,8 @@ class BillingService:
             "round_off":      0.0,
             "gst_breakup":    {},
             "item_count":     row.get("total_items", len(bill_items)),
+            "amount_paid":    float(row.get("amount_paid") or 0.0),
+            "balance":        float(row.get("balance") or (grand_total - float(row.get("amount_paid") or 0.0))),
         }
 
 

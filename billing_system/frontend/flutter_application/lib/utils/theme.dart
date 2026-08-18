@@ -42,7 +42,7 @@ class AppTheme {
   static const TextStyle headingLarge = TextStyle(
     fontSize: 20,
     fontWeight: FontWeight.w700,
-    color: textPrimary,
+    color: textPrimary, 
     letterSpacing: 0.2,
   );
 

@@ -42,14 +42,17 @@ class ApiService {
   // Auth
   // -------------------------------------------------------------------------
 
-  /// Login with mobile_number as password. Returns user data on success.
-  static Future<ApiResult<Map<String, dynamic>>> login(String mobileNumber) async {
+  /// Login with mobile_number and optional roleId. Returns user data on success.
+  static Future<ApiResult<Map<String, dynamic>>> login(String mobileNumber, {int? roleId}) async {
     try {
       final response = await _client
           .post(
             Uri.parse('${AppConstants.baseUrl}/auth/login'),
             headers: _headers,
-            body: jsonEncode({'mobile_number': mobileNumber}),
+            body: jsonEncode({
+              'mobile_number': mobileNumber,
+              if (roleId != null) 'role_id': roleId,
+            }),
           )
           .timeout(AppConstants.requestTimeout);
 
@@ -395,6 +398,28 @@ class ApiService {
     } catch (_) {
       return ApiResult.err(
           'Cannot push bill: server is unreachable.');
+    }
+  }
+
+  /// Update the payment amount for a salesperson bill row.
+  static Future<ApiResult<Map<String, dynamic>>> updateSalespersonBillPayment(
+      String rowId, double amountPaid) async {
+    try {
+      final response = await _client
+          .patch(
+            Uri.parse('${AppConstants.baseUrl}/salesperson-bills/$rowId/payment'),
+            headers: _headers,
+            body: jsonEncode({'amount_paid': amountPaid}),
+          )
+          .timeout(AppConstants.requestTimeout);
+
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        return ApiResult.ok(body['data'] as Map<String, dynamic>);
+      }
+      return ApiResult.err(_extractError(response));
+    } catch (_) {
+      return const ApiResult.err('Cannot reach server to update payment.');
     }
   }
 

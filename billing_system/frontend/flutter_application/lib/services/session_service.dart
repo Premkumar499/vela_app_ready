@@ -60,15 +60,23 @@ class SessionService {
     return role is num ? role.toInt() : null;
   }
 
-  /// True when the session belongs to an Admin (role_id == 1).
-  static bool isAdminSession(Map<String, dynamic>? session) =>
-      roleIdOf(session) == 1;
+  /// True when the session belongs to an Admin (role_id == 1 or 2, or full_name containing 'admin').
+  static bool isAdminSession(Map<String, dynamic>? session) {
+    final role = roleIdOf(session);
+    final fullName = (session?['full_name'] as String? ?? '').toLowerCase();
+    return role == 1 || role == 2 || fullName.contains('admin');
+  }
 
   /// Route the session should land on after login / auto-login.
   static String homeRouteOf(Map<String, dynamic>? session) {
     final role = roleIdOf(session);
-    if (role == 1) return AppConstants.routeAdminDashboard;
-    if (role == 4) return AppConstants.routeWarehouse;
+    final fullName = (session?['full_name'] as String? ?? '').toLowerCase();
+    if (role == 1 || role == 2 || fullName.contains('admin')) {
+      return AppConstants.routeAdminDashboard;
+    }
+    if (role == 4 || fullName.contains('warehouse')) {
+      return AppConstants.routeWarehouse;
+    }
     return AppConstants.routeDashboard;
   }
 

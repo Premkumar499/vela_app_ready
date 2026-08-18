@@ -74,6 +74,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           ],
         ),
         actions: [
+          IconButton(
+            tooltip: 'Settings',
+            icon: const Icon(Icons.settings_rounded),
+            onPressed: () => Navigator.pushNamed(context, AppConstants.routeSettings),
+          ),
           Padding(
             padding: const EdgeInsets.only(right: 8),
             child: IconButton(
@@ -111,7 +116,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   _DashTile(
                     icon: Icons.inventory_2_outlined,
                     label: 'Products',
-                    subtitle: 'Add / edit / delete products',
+                    subtitle: '',
                     color: AppTheme.info,
                     onTap: () => Navigator.pushNamed(
                         context, AppConstants.routeAdminProducts),
@@ -119,7 +124,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   _DashTile(
                     icon: Icons.people_alt_outlined,
                     label: 'Customers',
-                    subtitle: 'Add / edit / delete customers',
+                    subtitle: '',
                     color: Colors.deepPurple,
                     onTap: () => Navigator.pushNamed(
                         context, AppConstants.routeAdminCustomers),
@@ -150,14 +155,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     color: Colors.teal,
                     onTap: () => Navigator.pushNamed(
                         context, AppConstants.routeStockOut),
-                  ),
-                  _DashTile(
-                    icon: Icons.settings,
-                    label: 'Settings',
-                    subtitle: 'App & server settings',
-                    color: Colors.blueGrey,
-                    onTap: () =>
-                        Navigator.pushNamed(context, AppConstants.routeSettings),
                   ),
                 ],
               ),

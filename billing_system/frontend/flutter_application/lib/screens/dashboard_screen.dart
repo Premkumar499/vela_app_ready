@@ -81,6 +81,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ],
         ),
         actions: [
+          IconButton(
+            tooltip: 'Settings',
+            icon: const Icon(Icons.settings_rounded),
+            onPressed: () => Navigator.pushNamed(context, AppConstants.routeSettings),
+          ),
           Padding(
             padding: const EdgeInsets.only(right: 8),
             child: IconButton(

@@ -708,137 +708,138 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final dialogWidth = screenWidth < 500 ? screenWidth - 48 : 450.0;
+    final twoCols = dialogWidth >= 340;
+
     return AlertDialog(
       title: Text(_isEdit ? 'Edit Product' : 'Add Product'),
-      content: SingleChildScrollView(
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            // Stack two-column field groups on narrow phones.
-            final twoCols = constraints.maxWidth >= 340;
-            return Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
+      content: SizedBox(
+        width: dialogWidth,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _nameCtrl,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(
+                  labelText: 'Product Name *',
+                  prefixIcon: Icon(Icons.inventory_2_outlined, size: 20),
+                ),
+              ),
+              const SizedBox(height: 12),
+              if (twoCols)
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _categoryCtrl,
+                        textCapitalization: TextCapitalization.words,
+                        decoration: const InputDecoration(
+                          labelText: 'Category',
+                          prefixIcon: Icon(Icons.category_outlined, size: 20),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextField(
+                        controller: _unitCtrl,
+                        textCapitalization: TextCapitalization.characters,
+                        decoration: const InputDecoration(
+                          labelText: 'Unit',
+                          prefixIcon: Icon(Icons.straighten, size: 20),
+                        ),
+                      ),
+                    ),
+                  ],
+                )
+              else ...[
                 TextField(
-                  controller: _nameCtrl,
+                  controller: _categoryCtrl,
                   textCapitalization: TextCapitalization.words,
                   decoration: const InputDecoration(
-                    labelText: 'Product Name *',
-                    prefixIcon: Icon(Icons.inventory_2_outlined, size: 20),
+                    labelText: 'Category',
+                    prefixIcon: Icon(Icons.category_outlined, size: 20),
                   ),
                 ),
-                const SizedBox(height: 12),
-                if (twoCols)
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _categoryCtrl,
-                          textCapitalization: TextCapitalization.words,
-                          decoration: const InputDecoration(
-                            labelText: 'Category',
-                            prefixIcon: Icon(Icons.category_outlined, size: 20),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TextField(
-                          controller: _unitCtrl,
-                          textCapitalization: TextCapitalization.characters,
-                          decoration: const InputDecoration(
-                            labelText: 'Unit',
-                            prefixIcon: Icon(Icons.straighten, size: 20),
-                          ),
-                        ),
-                      ),
-                    ],
-                  )
-                else ...[
-                  TextField(
-                    controller: _categoryCtrl,
-                    textCapitalization: TextCapitalization.words,
-                    decoration: const InputDecoration(
-                      labelText: 'Category',
-                      prefixIcon: Icon(Icons.category_outlined, size: 20),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _unitCtrl,
-                    textCapitalization: TextCapitalization.characters,
-                    decoration: const InputDecoration(
-                      labelText: 'Unit',
-                      prefixIcon: Icon(Icons.straighten, size: 20),
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 12),
-                if (twoCols)
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _priceCtrl,
-                          keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true),
-                          decoration: const InputDecoration(
-                            labelText: 'Price (₹) *',
-                            prefixIcon: Icon(Icons.currency_rupee, size: 20),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TextField(
-                          controller: _stockCtrl,
-                          keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true),
-                          decoration: const InputDecoration(
-                            labelText: 'Stock *',
-                            prefixIcon: Icon(Icons.warehouse_outlined, size: 20),
-                          ),
-                        ),
-                      ),
-                    ],
-                  )
-                else ...[
-                  TextField(
-                    controller: _priceCtrl,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
-                    decoration: const InputDecoration(
-                      labelText: 'Price (₹) *',
-                      prefixIcon: Icon(Icons.currency_rupee, size: 20),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _stockCtrl,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
-                    decoration: const InputDecoration(
-                      labelText: 'Stock *',
-                      prefixIcon: Icon(Icons.warehouse_outlined, size: 20),
-                    ),
-                  ),
-                ],
                 const SizedBox(height: 12),
                 TextField(
-                  controller: _skuCtrl,
+                  controller: _unitCtrl,
+                  textCapitalization: TextCapitalization.characters,
                   decoration: const InputDecoration(
-                    labelText: 'SKU / Barcode (optional)',
-                    prefixIcon: Icon(Icons.qr_code_2, size: 20),
+                    labelText: 'Unit',
+                    prefixIcon: Icon(Icons.straighten, size: 20),
                   ),
                 ),
-                if (_error != null) ...[
-                  const SizedBox(height: 12),
-                  Text(_error!,
-                      style:
-                          const TextStyle(color: AppTheme.error, fontSize: 13)),
-                ],
               ],
-            );
-          },
+              const SizedBox(height: 12),
+              if (twoCols)
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _priceCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        decoration: const InputDecoration(
+                          labelText: 'Price (₹) *',
+                          prefixIcon: Icon(Icons.currency_rupee, size: 20),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextField(
+                        controller: _stockCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        decoration: const InputDecoration(
+                          labelText: 'Stock *',
+                          prefixIcon: Icon(Icons.warehouse_outlined, size: 20),
+                        ),
+                      ),
+                    ),
+                  ],
+                )
+              else ...[
+                TextField(
+                  controller: _priceCtrl,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'Price (₹) *',
+                    prefixIcon: Icon(Icons.currency_rupee, size: 20),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _stockCtrl,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'Stock *',
+                    prefixIcon: Icon(Icons.warehouse_outlined, size: 20),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
+              TextField(
+                controller: _skuCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'SKU / Barcode (optional)',
+                  prefixIcon: Icon(Icons.qr_code_2, size: 20),
+                ),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Text(_error!,
+                    style:
+                        const TextStyle(color: AppTheme.error, fontSize: 13)),
+              ],
+            ],
+          ),
         ),
       ),
       actions: [

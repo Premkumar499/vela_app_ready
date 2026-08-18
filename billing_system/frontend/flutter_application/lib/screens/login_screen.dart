@@ -105,7 +105,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           const SizedBox(height: 4),
                           const Text('Enter your mobile number to continue',
                               style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
-                          const SizedBox(height: 28),
+                          const SizedBox(height: 20),
                           TextField(
                             controller: _controller,
                             obscureText: false,

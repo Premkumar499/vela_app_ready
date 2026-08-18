@@ -197,6 +197,7 @@ class SalespersonBillService:
                 "draft_bill_id":  "",
                 "items":          items,
                 "is_salesperson_bill": True,
+                "amount_paid":    float(row.get("amount_paid") or 0.0),
             }
 
             result = billing_service.create_bill(payload)
@@ -227,6 +228,29 @@ class SalespersonBillService:
             except Exception:
                 pass
             return {"success": False, "message": f"Failed to push bill: {exc}"}
+
+    def update_payment(self, bill_id: str, amount_paid: float) -> dict:
+        """Update amount_paid on a pending salesperson bill."""
+        try:
+            sb = _get_supabase()
+            update_data = {
+                "amount_paid": amount_paid,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }
+            # Note: Since PostgreSQL generated columns are used, PG automatically
+            # recalculates "balance" = "grand_total" - "amount_paid".
+            resp = sb.table("salesperson_bills").update(update_data).eq("id", bill_id).execute()
+            if not resp.data:
+                return {"success": False, "message": f"No salesperson bill with ID {bill_id}"}
+            
+            return {
+                "success": True, 
+                "message": "Payment updated successfully", 
+                "data": resp.data[0]
+            }
+        except Exception as exc:
+            logger.exception("[SalespersonBillService] update_payment failed")
+            return {"success": False, "message": f"Failed to update payment: {exc}"}
 
     # ------------------------------------------------------------------
     # Helpers

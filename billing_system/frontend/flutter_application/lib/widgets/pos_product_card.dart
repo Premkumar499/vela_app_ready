@@ -112,7 +112,7 @@ class _PosProductCardState extends State<PosProductCard>
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 140),
             decoration: _hovered ? PosTheme.cardHovered : PosTheme.card,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
@@ -123,7 +123,7 @@ class _PosProductCardState extends State<PosProductCard>
                   icon:     _categoryIcon(widget.product.category),
                   imageUrl: widget.product.imageUrl,
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 8),
 
                 // ── Info ─────────────────────────────────────────────
                 Expanded(
@@ -143,48 +143,60 @@ class _PosProductCardState extends State<PosProductCard>
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      const SizedBox(height: 3),
+                      const SizedBox(height: 2),
 
                       // Category
                       Text(
                         widget.product.category,
                         style: const TextStyle(
-                          fontSize: 11,
+                          fontSize: 10,
                           color: PosTheme.textSecondary,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      const SizedBox(height: 6),
+                      const SizedBox(height: 4),
 
-                      // Price + Stock row
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          // Price — use product.price directly (no GST)
-                          Text(
-                            '₹${widget.product.price.toStringAsFixed(2)}',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w800,
-                              color: _color,
+                      // Price + Stock row using Wrap
+                      SizedBox(
+                        width: double.infinity,
+                        child: Wrap(
+                          alignment: WrapAlignment.spaceBetween,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: 4,
+                          runSpacing: 2,
+                          children: [
+                            // Price subrow
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.baseline,
+                              textBaseline: TextBaseline.alphabetic,
+                              children: [
+                                Text(
+                                  '₹${widget.product.price.toStringAsFixed(2)}',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w800,
+                                    color: _color,
+                                  ),
+                                ),
+                                Text(
+                                  ' /${widget.product.unit}',
+                                  style: const TextStyle(
+                                    fontSize: 10,
+                                    color: PosTheme.textHint,
+                                  ),
+                                ),
+                              ],
                             ),
-                          ),
-                          Text(
-                            ' /${widget.product.unit}',
-                            style: const TextStyle(
-                              fontSize: 11,
-                              color: PosTheme.textHint,
+                            // Stock pill
+                            _StockPill(
+                              stock:  widget.product.availableStock,
+                              unit:   widget.product.unit,
+                              isLow:  _lowStock,
                             ),
-                          ),
-                          const Spacer(),
-                          // Stock
-                          _StockPill(
-                            stock:  widget.product.availableStock,
-                            unit:   widget.product.unit,
-                            isLow:  _lowStock,
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ],
                   ),
@@ -213,14 +225,14 @@ class _Avatar extends StatelessWidget {
   });
 
   Widget _letterAvatar() => Container(
-        width: 56,
-        height: 56,
+        width: 44,
+        height: 44,
         color: color,
         alignment: Alignment.center,
         child: Text(
           initial,
           style: const TextStyle(
-            fontSize: 22,
+            fontSize: 18,
             fontWeight: FontWeight.w800,
             color: Colors.white,
           ),
@@ -235,13 +247,13 @@ class _Avatar extends StatelessWidget {
       children: [
         ClipOval(
           child: SizedBox(
-            width: 56,
-            height: 56,
+            width: 44,
+            height: 44,
             child: hasImage
                 ? Image.network(
                     imageUrl!,
-                    width: 56,
-                    height: 56,
+                    width: 44,
+                    height: 44,
                     fit: BoxFit.cover,
                     errorBuilder: (_, __, ___) => _letterAvatar(),
                   )
@@ -249,8 +261,8 @@ class _Avatar extends StatelessWidget {
           ),
         ),
         Positioned(
-          right: -3,
-          bottom: -3,
+          right: -2,
+          bottom: -2,
           child: Container(
             padding: const EdgeInsets.all(2),
             decoration: BoxDecoration(
@@ -258,7 +270,7 @@ class _Avatar extends StatelessWidget {
               shape: BoxShape.circle,
               border: Border.all(color: PosTheme.border, width: 1),
             ),
-            child: Icon(icon, size: 10, color: color),
+            child: Icon(icon, size: 9, color: color),
           ),
         ),
       ],

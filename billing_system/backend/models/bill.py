@@ -127,3 +127,4 @@ class Bill:
             area=data.get("area", ""),
             price_list=data.get("price_list", "Retail"),
         )
+

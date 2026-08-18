@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models/bill.dart';
 import '../services/api_service.dart';
@@ -18,8 +19,6 @@ class BillHistoryScreen extends StatefulWidget {
   State<BillHistoryScreen> createState() => _BillHistoryScreenState();
 }
 
-enum _BillPeriod { today, month, year, all }
-
 class _BillHistoryScreenState extends State<BillHistoryScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
@@ -29,7 +28,8 @@ class _BillHistoryScreenState extends State<BillHistoryScreen>
   bool _isLoading = true;
   bool _isAdmin = false;
   String? _error;
-  _BillPeriod _period = _BillPeriod.all;
+  DateTime? _startDate;
+  DateTime? _endDate;
   final TextEditingController _searchCtrl = TextEditingController();
   final Set<String> _selectedBillNumbers = {};
   bool _isSelectionMode = false;
@@ -85,10 +85,6 @@ class _BillHistoryScreenState extends State<BillHistoryScreen>
 
   void _applyFilter() {
     final query = _searchCtrl.text.toLowerCase();
-    final now = DateTime.now();
-    final startOfDay = DateTime(now.year, now.month, now.day);
-    final startOfMonth = DateTime(now.year, now.month);
-    final startOfYear = DateTime(now.year);
 
     setState(() {
       _filtered = _allBills.where((b) {
@@ -97,15 +93,15 @@ class _BillHistoryScreenState extends State<BillHistoryScreen>
             !b.customerName.toLowerCase().contains(query)) {
           return false;
         }
-        if (_period == _BillPeriod.all) return true;
         final d = DateTime.tryParse(b.date);
         if (d == null) return false;
-        return switch (_period) {
-          _BillPeriod.today => !d.isBefore(startOfDay),
-          _BillPeriod.month => !d.isBefore(startOfMonth),
-          _BillPeriod.year => !d.isBefore(startOfYear),
-          _BillPeriod.all => true,
-        };
+        if (_startDate != null && d.isBefore(_startDate!)) {
+          return false;
+        }
+        if (_endDate != null && d.isAfter(_endDate!)) {
+          return false;
+        }
+        return true;
       }).toList();
     });
   }
@@ -366,12 +362,13 @@ class _BillHistoryScreenState extends State<BillHistoryScreen>
   Widget _buildFilterCard() {
     final currency = NumberFormat.currency(symbol: '₹', decimalDigits: 2);
     final total = _filtered.fold<double>(0, (s, b) => s + b.grandTotal);
-    final periodLabel = switch (_period) {
-      _BillPeriod.today => 'Today',
-      _BillPeriod.month => 'This Month',
-      _BillPeriod.year => 'This Year',
-      _BillPeriod.all => 'All Time',
-    };
+    final periodLabel = _startDate != null && _endDate != null
+        ? '${DateFormat('dd/MM/yy').format(_startDate!)} - ${DateFormat('dd/MM/yy').format(_endDate!)}'
+        : (_startDate != null
+            ? 'From ${DateFormat('dd/MM/yy').format(_startDate!)}'
+            : (_endDate != null
+                ? 'To ${DateFormat('dd/MM/yy').format(_endDate!)}'
+                : 'All Time'));
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 10, 12, 4),
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
@@ -384,12 +381,121 @@ class _BillHistoryScreenState extends State<BillHistoryScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Period pills
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+          Row(
             children: [
-              for (final p in _BillPeriod.values) _buildPeriodPill(p),
+              Expanded(
+                child: InkWell(
+                  onTap: _pickStartDate,
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: AppTheme.tableBorder),
+                      borderRadius: BorderRadius.circular(8),
+                      color: Colors.grey.shade50,
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.calendar_today, size: 16, color: AppTheme.primary),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'START DATE',
+                                style: TextStyle(
+                                  fontSize: 9,
+                                  color: Colors.black54,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                _startDate == null
+                                    ? 'Select Date'
+                                    : DateFormat('dd-MM-yyyy').format(_startDate!),
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.black87,
+                                  ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (_startDate != null)
+                          GestureDetector(
+                            onTap: () {
+                              setState(() {
+                                _startDate = null;
+                              });
+                              _applyFilter();
+                            },
+                            child: const Icon(Icons.clear, size: 14, color: Colors.black54),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: InkWell(
+                  onTap: _pickEndDate,
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: AppTheme.tableBorder),
+                      borderRadius: BorderRadius.circular(8),
+                      color: Colors.grey.shade50,
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.calendar_today, size: 16, color: AppTheme.primary),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'END DATE',
+                                style: TextStyle(
+                                  fontSize: 9,
+                                  color: Colors.black54,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                _endDate == null
+                                    ? 'Select Date'
+                                    : DateFormat('dd-MM-yyyy').format(_endDate!),
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.black87,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (_endDate != null)
+                          GestureDetector(
+                            onTap: () {
+                              setState(() {
+                                _endDate = null;
+                              });
+                              _applyFilter();
+                            },
+                            child: const Icon(Icons.clear, size: 14, color: Colors.black54),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 10),
@@ -425,44 +531,143 @@ class _BillHistoryScreenState extends State<BillHistoryScreen>
               ),
             ],
           ),
+          const SizedBox(height: 10),
+          const Divider(height: 1),
+          const SizedBox(height: 10),
+          // Export row
+          Row(
+            children: [
+              const Icon(Icons.download, size: 16, color: Colors.black54),
+              const SizedBox(width: 6),
+              Text(
+                'Export Report:',
+                style: AppTheme.bodySmall.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black54,
+                ),
+              ),
+              const Spacer(),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                ),
+                onPressed: () => _exportReport('pdf'),
+                icon: const Icon(Icons.picture_as_pdf, size: 16),
+                label: const Text('PDF', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green.shade700,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                ),
+                onPressed: () => _exportReport('excel'),
+                icon: const Icon(Icons.table_view, size: 16),
+                label: const Text('Excel', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildPeriodPill(_BillPeriod p) {
-    final selected = _period == p;
-    final label = switch (p) {
-      _BillPeriod.today => 'Today',
-      _BillPeriod.month => 'This Month',
-      _BillPeriod.year => 'This Year',
-      _BillPeriod.all => 'All',
-    };
-    return InkWell(
-      onTap: () {
-        setState(() => _period = p);
-        _applyFilter();
+  Future<void> _pickStartDate() async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: _startDate ?? DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: AppTheme.primary,
+              onPrimary: Colors.white,
+              onSurface: Colors.black87,
+            ),
+          ),
+          child: child!,
+        );
       },
-      borderRadius: BorderRadius.circular(20),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-        decoration: BoxDecoration(
-          color: selected ? AppTheme.primary : Colors.transparent,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: selected ? AppTheme.primary : AppTheme.tableBorder,
-          ),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 12.5,
-            fontWeight: FontWeight.w600,
-            color: selected ? Colors.white : AppTheme.textSecondary,
-          ),
-        ),
-      ),
     );
+
+    if (picked != null) {
+      setState(() {
+        _startDate = picked;
+      });
+      _applyFilter();
+    }
+  }
+
+  Future<void> _pickEndDate() async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: _endDate ?? _startDate ?? DateTime.now(),
+      firstDate: _startDate ?? DateTime(2020),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: AppTheme.primary,
+              onPrimary: Colors.white,
+              onSurface: Colors.black87,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (picked != null) {
+      setState(() {
+        _endDate = DateTime(picked.year, picked.month, picked.day, 23, 59, 59);
+      });
+      _applyFilter();
+    }
+  }
+
+  Future<void> _exportReport(String type) async {
+    final query = _searchCtrl.text.trim();
+    String? startStr;
+    String? endStr;
+    if (_startDate != null) {
+      startStr = DateFormat('yyyy-MM-dd').format(_startDate!);
+    }
+    if (_endDate != null) {
+      endStr = DateFormat('yyyy-MM-dd').format(_endDate!);
+    }
+
+    final queryParams = <String, String>{};
+    if (startStr != null) queryParams['start_date'] = startStr;
+    if (endStr != null) queryParams['end_date'] = endStr;
+    if (query.isNotEmpty) queryParams['search'] = query;
+
+    final uri = Uri.parse('${AppConstants.baseUrl}/bills/export/$type').replace(queryParameters: queryParams);
+    
+    try {
+      final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!launched) {
+        throw 'Could not launch $uri';
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Failed to export: $e'),
+          backgroundColor: AppTheme.error,
+        ));
+      }
+    }
   }
 
   Widget _buildError() {

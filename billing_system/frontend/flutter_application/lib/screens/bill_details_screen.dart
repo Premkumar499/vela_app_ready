@@ -298,6 +298,18 @@ class _BillDetailsScreenState extends State<BillDetailsScreen> {
                       color: AppTheme.primary,
                       fontSize: 18,
                     ),
+                    const Divider(),
+                    _TotalRow(
+                      'Amount Paid',
+                      currency.format(bill.amountPaid),
+                      color: AppTheme.success,
+                    ),
+                    _TotalRow(
+                      'Outstanding Balance',
+                      currency.format(bill.balance),
+                      color: bill.balance > 0 ? AppTheme.error : AppTheme.success,
+                      isBold: bill.balance > 0,
+                    ),
                   ],
                 ),
               );
