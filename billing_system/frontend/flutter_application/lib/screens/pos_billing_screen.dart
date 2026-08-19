@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -39,6 +40,24 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
   // ── Bill state ───────────────────────────────────────────────────────────
   bool _isSaving = false;
   String _invoiceNum = 'DRAFT';
+  String? _errorMessage;
+  Timer? _errorTimer;
+
+  void _showErrorMessage(String? msg) {
+    _errorTimer?.cancel();
+    setState(() {
+      _errorMessage = msg;
+    });
+    if (msg != null && msg.isNotEmpty) {
+      _errorTimer = Timer(const Duration(seconds: 5), () {
+        if (mounted) {
+          setState(() {
+            _errorMessage = null;
+          });
+        }
+      });
+    }
+  }
 
   @override
   void initState() {
@@ -49,6 +68,7 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
 
   @override
   void dispose() {
+    _errorTimer?.cancel();
     _searchCtrl.removeListener(_applyFilter);
     _searchCtrl.dispose();
     _searchFocus.dispose();
@@ -104,7 +124,7 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
     }
     if (prov.customer.id == '00000000-0000-0000-0000-000000000000' ||
         prov.customer.name == 'Walk-in Customer') {
-      _snack('Please select a customer or add a new customer first / தயவுசெய்து வாடிக்கையாளரைத் தேர்ந்தெடுக்கவும் அல்லது புதிய வாடிக்கையாளரைச் சேர்க்கவும்.', error: true);
+      _snack('Please select a customer or add a new customer first', error: true);
       return;
     }
     setState(() => _isSaving = true);
@@ -183,7 +203,10 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
                   onClose: () {
                     Navigator.of(dialogCtx).pop();
                     prov.resetBill();
-                    setState(() => _invoiceNum = 'DRAFT');
+                    setState(() {
+                      _invoiceNum = 'DRAFT';
+                    });
+                    _showErrorMessage(null);
                   },
                 ),
               ),
@@ -214,7 +237,10 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
         danger:  true,
         onConfirm: () {
           prov.cancelBillWithRelease();
-          setState(() => _invoiceNum = 'DRAFT');
+          setState(() {
+            _invoiceNum = 'DRAFT';
+          });
+          _showErrorMessage(null);
         },
       ),
     );
@@ -230,7 +256,10 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
         message: 'Discard current bill and start a new one?',
         onConfirm: () {
           prov.cancelBillWithRelease();
-          setState(() => _invoiceNum = 'DRAFT');
+          setState(() {
+            _invoiceNum = 'DRAFT';
+          });
+          _showErrorMessage(null);
         },
       ),
     );
@@ -238,10 +267,14 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
 
   void _snack(String msg, {bool error = false}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg),
-      backgroundColor: error ? PosTheme.danger : PosTheme.success,
-    ));
+    if (error) {
+      _showErrorMessage(msg);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(msg),
+        backgroundColor: PosTheme.success,
+      ));
+    }
   }
 
   // ─── Build ─────────────────────────────────────────────────────────────────
@@ -294,73 +327,123 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
         ],
       ),
       // ── Body: responsive layout ──────────────────────────────────────────
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          final isWide = constraints.maxWidth >= 1000;
-          final leftContent = _LeftPanel(
-            categories:   _categories,
-            selectedCat:  _selectedCat,
-            products:     _filtered.take(_productsToShow).toList(),
-            loading:      _loadingProds,
-            searchCtrl:   _searchCtrl,
-            searchFocus:  _searchFocus,
-            onCategory:   _selectCategory,
-            hasMore:      _productsToShow < _filtered.length,
-            onLoadMore:   () {
-              setState(() => _productsToShow += 100);
-            },
-            onProduct:    (p) async {
-              final result = await provider.addProductWithReservation(p);
-              if (!context.mounted) return;
-              if (!result.success) {
-                final available = result.remainingAvailable;
-                final msg = available > 0
-                    ? 'Only ${available.toStringAsFixed(available.truncateToDouble() == available ? 0 : 1)} units are currently available'
-                    : '${p.name} is out of stock';
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(msg),
-                    backgroundColor: PosTheme.danger,
-                    duration: const Duration(seconds: 3),
-                  ),
+      body: Column(
+        children: [
+          if (_errorMessage != null)
+            Align(
+              alignment: Alignment.topCenter,
+              child: Container(
+                constraints: const BoxConstraints(maxWidth: 550),
+                margin: const EdgeInsets.only(top: 10, bottom: 2),
+                decoration: BoxDecoration(
+                  color: PosTheme.danger,
+                  borderRadius: BorderRadius.circular(PosTheme.radiusSm),
+                  boxShadow: [
+                    BoxShadow(
+                      color: PosTheme.danger.withValues(alpha: 0.15),
+                      blurRadius: 6,
+                      offset: const Offset(0, 3),
+                    ),
+                  ],
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 16),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        _errorMessage!,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    InkWell(
+                      onTap: () => _showErrorMessage(null),
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                        child: Icon(Icons.close, color: Colors.white70, size: 16),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final isWide = constraints.maxWidth >= 1000;
+                final leftContent = _LeftPanel(
+                  categories:   _categories,
+                  selectedCat:  _selectedCat,
+                  products:     _filtered.take(_productsToShow).toList(),
+                  loading:      _loadingProds,
+                  searchCtrl:   _searchCtrl,
+                  searchFocus:  _searchFocus,
+                  onCategory:   _selectCategory,
+                  hasMore:      _productsToShow < _filtered.length,
+                  onLoadMore:   () {
+                    setState(() => _productsToShow += 100);
+                  },
+                  onProduct:    (p) async {
+                    final result = await provider.addProductWithReservation(p);
+                    if (!context.mounted) return;
+                    if (!result.success) {
+                      final available = result.remainingAvailable;
+                      final msg = available > 0
+                          ? 'Only ${available.toStringAsFixed(available.truncateToDouble() == available ? 0 : 1)} units are currently available'
+                          : '${p.name} is out of stock';
+                      _showErrorMessage(msg);
+                    } else {
+                      _showErrorMessage(null);
+                    }
+                  },
                 );
-              }
-            },
-          );
-          final rightContent = _RightPanel(
-            provider:   provider,
-            invoiceNum: _invoiceNum,
-            isSaving:   _isSaving,
-            onSave:     _saveBill,
-            onCancel:   _cancelBill,
-            scrollable: !isWide,
-          );
-          if (isWide) {
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(flex: 65, child: leftContent),
-                Expanded(flex: 35, child: rightContent),
-              ],
-            );
-          }
-          // Mobile / narrow: stack vertically with scrollable layout
-          return Column(
-            children: [
-              // Product selection takes the top portion
-              Expanded(
-                flex: 52,
-                child: leftContent,
-              ),
-              Divider(height: 1, color: PosTheme.border),
-              // Bill panel below
-              Expanded(
-                flex: 48,
-                child: rightContent,
-              ),
-            ],
-          );
-        },
+                final rightContent = _RightPanel(
+                  provider:   provider,
+                  invoiceNum: _invoiceNum,
+                  isSaving:   _isSaving,
+                  onSave:     _saveBill,
+                  onCancel:   _cancelBill,
+                  scrollable: !isWide,
+                  onError: (msg) {
+                    _showErrorMessage(msg.isEmpty ? null : msg);
+                  },
+                );
+                if (isWide) {
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(flex: 65, child: leftContent),
+                      Expanded(flex: 35, child: rightContent),
+                    ],
+                  );
+                }
+                // Mobile / narrow: stack vertically with scrollable layout
+                return Column(
+                  children: [
+                    // Product selection takes the top portion
+                    Expanded(
+                      flex: 52,
+                      child: leftContent,
+                    ),
+                    Divider(height: 1, color: PosTheme.border),
+                    // Bill panel below
+                    Expanded(
+                      flex: 48,
+                      child: rightContent,
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -703,6 +786,7 @@ class _RightPanel extends StatelessWidget {
   final bool   isSaving;
   final Future<void> Function() onSave;
   final VoidCallback onCancel;
+  final ValueChanged<String>? onError;
 
   /// On narrow screens the panel is squeezed into a fraction of the screen
   /// height, so the whole panel scrolls instead of overflowing.
@@ -715,6 +799,7 @@ class _RightPanel extends StatelessWidget {
     required this.onSave,
     required this.onCancel,
     this.scrollable = false,
+    this.onError,
   });
 
   @override
@@ -754,11 +839,17 @@ class _RightPanel extends StatelessWidget {
                     final msg = avail > 0
                         ? 'Only ${avail.toStringAsFixed(0)} units available'
                         : '${item.productName} is out of stock';
-                    ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-                      content: Text(msg),
-                      backgroundColor: PosTheme.danger,
-                      duration: const Duration(seconds: 3),
-                    ));
+                    if (onError != null) {
+                      onError!(msg);
+                    } else {
+                      ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                        content: Text(msg),
+                        backgroundColor: PosTheme.danger,
+                        duration: const Duration(seconds: 3),
+                      ));
+                    }
+                  } else if (result.success && onError != null) {
+                    onError!('');
                   }
                 },
                 onDecrease: () async {
