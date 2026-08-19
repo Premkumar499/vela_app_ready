@@ -86,130 +86,188 @@ def generate_bills_report_pdf(bills, start_date=None, end_date=None):
     from reportlab.lib import colors
     from reportlab.lib.units import mm
     from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, HRFlowable
+    from reportlab.platypus import Image as RLImage
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
     import io
+    import os
+    from datetime import datetime
 
     # Fonts
     FONT_REG = "Helvetica"
     FONT_BOLD = "Helvetica-Bold"
 
-    navy = colors.HexColor("#1B2A4A")
-    light = colors.HexColor("#F3F6FC")
+    brand_green = colors.HexColor("#1b7a42")
+    dark_grey = colors.HexColor("#333333")
 
     # Styles
-    title_style = ParagraphStyle("Title", fontSize=18, fontName=FONT_BOLD, textColor=navy, alignment=TA_CENTER)
-    subtitle_style = ParagraphStyle("SubTitle", fontSize=9, fontName=FONT_REG, textColor=colors.HexColor("#555555"), alignment=TA_CENTER)
-    header_style = ParagraphStyle("Header", fontSize=9, fontName=FONT_BOLD, textColor=colors.white, alignment=TA_CENTER)
+    title_style = ParagraphStyle("DocTitle", fontSize=26, fontName=FONT_BOLD, textColor=brand_green, alignment=TA_RIGHT, leading=30)
+    subtitle_style = ParagraphStyle("DocSubTitle", fontSize=16, fontName=FONT_BOLD, textColor=dark_grey, alignment=TA_RIGHT, leading=20)
+    meta_style = ParagraphStyle("DocMeta", fontSize=9.5, fontName=FONT_REG, textColor=dark_grey, alignment=TA_RIGHT, leading=14)
+    
+    header_style = ParagraphStyle("HeaderCell", fontSize=9.5, fontName=FONT_BOLD, textColor=colors.white, alignment=TA_LEFT)
+    header_center = ParagraphStyle("HeaderCenter", fontSize=9.5, fontName=FONT_BOLD, textColor=colors.white, alignment=TA_CENTER)
+    
     cell_style = ParagraphStyle("Cell", fontSize=8.5, fontName=FONT_REG, textColor=colors.black, alignment=TA_LEFT)
-    cell_right = ParagraphStyle("CellRight", fontSize=8.5, fontName=FONT_REG, textColor=colors.black, alignment=TA_RIGHT)
     cell_center = ParagraphStyle("CellCenter", fontSize=8.5, fontName=FONT_REG, textColor=colors.black, alignment=TA_CENTER)
-    bold_cell = ParagraphStyle("BoldCell", fontSize=8.5, fontName=FONT_BOLD, textColor=colors.black, alignment=TA_LEFT)
-    bold_cell_right = ParagraphStyle("BoldCellRight", fontSize=8.5, fontName=FONT_BOLD, textColor=colors.black, alignment=TA_RIGHT)
+    
+    # Metrics styles
+    metric_label = ParagraphStyle("MetricLabel", fontSize=11, fontName=FONT_REG, textColor=colors.HexColor("#555555"), alignment=TA_CENTER, leading=14)
+    metric_value = ParagraphStyle("MetricValue", fontSize=20, fontName=FONT_BOLD, textColor=brand_green, alignment=TA_CENTER, leading=24)
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=12*mm, rightMargin=12*mm, topMargin=12*mm, bottomMargin=12*mm)
     story = []
 
-    # Title
-    story.append(Paragraph("<b>VELA AGENCY</b>", title_style))
-    story.append(Spacer(1, 4))
-    story.append(Paragraph("<b>BILLS HISTORY REPORT</b>", ParagraphStyle("Title2", fontSize=13, fontName=FONT_BOLD, textColor=navy, alignment=TA_CENTER)))
-    story.append(Spacer(1, 2))
+    now = datetime.now()
+    generated_on = f"{now.day}-{now.month}-{now.year} {now.strftime('%H:%M')}"
     
-    date_str = f"Date Range: {start_date} to {end_date}" if (start_date and end_date) else \
-               f"Since {start_date}" if start_date else \
-               f"Until {end_date}" if end_date else "All Time"
-    story.append(Paragraph(f"Report Generated on {datetime.now().strftime('%d-%m-%Y %H:%M:%S')} | {date_str}", subtitle_style))
-    story.append(Spacer(1, 8))
-    story.append(HRFlowable(width="100%", thickness=1, color=navy, spaceAfter=10))
+    # Determine Date Range
+    if start_date and end_date:
+        date_range_str = f"{start_date} to {end_date}"
+    elif start_date:
+        date_range_str = f"Since {start_date}"
+    elif end_date:
+        date_range_str = f"Until {end_date}"
+    elif bills:
+        bill_dates = []
+        for b in bills:
+            d_str = b.get("date", "").split("T")[0]
+            if d_str:
+                bill_dates.append(d_str)
+        if bill_dates:
+            date_range_str = f"{min(bill_dates)} to {max(bill_dates)}"
+        else:
+            date_range_str = "All Time"
+    else:
+        date_range_str = "All Time"
+
+    # Header flowables list
+    right_flowables = [
+        Paragraph("VELA AGENCY", title_style),
+        Spacer(1, 2),
+        Paragraph("Sales & Financial Report", subtitle_style),
+        Spacer(1, 6),
+        Paragraph(f"<b>Generated On:</b> {generated_on}", meta_style),
+        Paragraph(f"<b>Date Range:</b> {date_range_str}", meta_style),
+        Paragraph("<b>Salesperson:</b> All", meta_style),
+    ]
+
+    # Logo image
+    LOGO_PATH = os.path.join(os.path.dirname(__file__), "..", "company_logo.jpg")
+    logo_cell = Spacer(28*mm, 28*mm)
+    if os.path.exists(LOGO_PATH):
+        try:
+            logo_cell = RLImage(LOGO_PATH, width=28*mm, height=28*mm)
+        except Exception:
+            pass
+
+    # Header Table
+    header_table = Table(
+        [[logo_cell, right_flowables]],
+        colWidths=[50*mm, 136*mm]
+    )
+    header_table.setStyle(TableStyle([
+        ("VALIGN", (0,0), (-1,-1), "TOP"),
+        ("ALIGN", (0,0), (0,0), "LEFT"),
+        ("ALIGN", (1,0), (1,0), "RIGHT"),
+        ("LEFTPADDING", (0,0), (-1,-1), 0),
+        ("RIGHTPADDING", (0,0), (-1,-1), 0),
+        ("TOPPADDING", (0,0), (-1,-1), 0),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 0),
+    ]))
+    story.append(header_table)
+    story.append(Spacer(1, 10))
+    story.append(HRFlowable(width="100%", thickness=2, color=brand_green, spaceAfter=15))
 
     # Summary calculations
     total_bills = len(bills)
     total_sales = sum(float(b.get("grand_total", 0)) for b in bills)
-    cash_sales = sum(float(b.get("grand_total", 0)) for b in bills if b.get("payment_type", "").upper() == "CASH")
-    credit_sales = sum(float(b.get("grand_total", 0)) for b in bills if b.get("payment_type", "").upper() == "CREDIT")
 
-    # Summary Table
-    summary_data = [
+    # Metrics Box
+    metrics_data = [
         [
-            Paragraph("<b>Total Bills</b>", bold_cell),
-            Paragraph("<b>Total Sales</b>", bold_cell),
-            Paragraph("<b>Cash Sales</b>", bold_cell),
-            Paragraph("<b>Credit Sales</b>", bold_cell),
+            Paragraph("Total Revenue", metric_label),
+            Paragraph("Total Orders", metric_label)
         ],
         [
-            Paragraph(str(total_bills), cell_style),
-            Paragraph(f"₹ {total_sales:,.2f}", cell_style),
-            Paragraph(f"₹ {cash_sales:,.2f}", cell_style),
-            Paragraph(f"₹ {credit_sales:,.2f}", cell_style),
+            Paragraph(f"INR {total_sales:,.2f}", metric_value),
+            Paragraph(str(total_bills), metric_value)
         ]
     ]
-    summary_tbl = Table(summary_data, colWidths=[40*mm, 48*mm, 48*mm, 48*mm])
-    summary_tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#E7ECF6")),
-        ("GRID", (0,0), (-1,-1), 0.5, colors.HexColor("#CCCCCC")),
+    metrics_table = Table(metrics_data, colWidths=[93*mm, 93*mm])
+    metrics_table.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,-1), colors.HexColor("#EBF6ED")),
+        ("BOX", (0,0), (-1,-1), 0.8, colors.HexColor("#A1D9B4")),
         ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
-        ("TOPPADDING", (0,0), (-1,-1), 6),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 6),
-        ("LEFTPADDING", (0,0), (-1,-1), 8),
+        ("TOPPADDING", (0,0), (-1,-1), 12),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 12),
     ]))
-    story.append(summary_tbl)
-    story.append(Spacer(1, 12))
+    story.append(metrics_table)
+    story.append(Spacer(1, 15))
+
+    # "Order Details:" heading
+    story.append(Paragraph("<b>Order Details:</b>", ParagraphStyle("SectionTitle", fontSize=13, fontName=FONT_BOLD, textColor=dark_grey, leading=16)))
+    story.append(Spacer(1, 8))
 
     # Bills Table
     col_hdr = [
-        Paragraph("<b>S.No</b>", header_style),
-        Paragraph("<b>Bill Number</b>", header_style),
-        Paragraph("<b>Date</b>", header_style),
-        Paragraph("<b>Customer Name</b>", header_style),
-        Paragraph("<b>Mode</b>", header_style),
-        Paragraph("<b>Items</b>", header_style),
-        Paragraph("<b>Total (₹)</b>", header_style)
+        Paragraph("<b>S.No</b>", header_center),
+        Paragraph("<b>Bill #</b>", header_style),
+        Paragraph("<b>Customer</b>", header_style),
+        Paragraph("<b>Items</b>", header_center),
+        Paragraph("<b>Total</b>", header_style),
+        Paragraph("<b>Status</b>", header_style),
+        Paragraph("<b>Date</b>", header_style)
     ]
     table_data = [col_hdr]
     
     for idx, b in enumerate(bills):
-        # Format Date
+        # Format Date as YYYY-MM-DD
         dt_str = b.get("date", "")
         try:
             dt_part = dt_str.split("T")[0]
             dt_obj = datetime.strptime(dt_part, "%Y-%m-%d")
-            formatted_dt = dt_obj.strftime("%d-%m-%Y")
+            formatted_dt = dt_obj.strftime("%Y-%m-%d")
         except Exception:
             formatted_dt = dt_str.split("T")[0] if "T" in dt_str else dt_str
 
+        # Compute Status
+        status = b.get("remarks", "").strip()
+        if not status:
+            balance = float(b.get("balance", 0.0))
+            if balance > 0:
+                status = "PENDING"
+            else:
+                status = "PAID"
+
+        # Bill Number display
+        bill_no = b.get("bill_number", b.get("bill_no", ""))
+        if len(bill_no) > 16 or "-" in bill_no:
+            bill_no_display = bill_no[:8]
+        else:
+            bill_no_display = bill_no
+
         table_data.append([
             Paragraph(str(idx + 1), cell_center),
-            Paragraph(b.get("bill_number", b.get("bill_no", "")), cell_center),
-            Paragraph(formatted_dt, cell_center),
+            Paragraph(bill_no_display, cell_style),
             Paragraph(b.get("customer_name", "Walk-in Customer"), cell_style),
-            Paragraph(b.get("payment_type", "Cash"), cell_center),
             Paragraph(str(b.get("item_count", 0)), cell_center),
-            Paragraph(f"{float(b.get('grand_total', 0)):,.2f}", cell_right)
+            Paragraph(f"{float(b.get('grand_total', 0)):.2f}", cell_style),
+            Paragraph(status, cell_style),
+            Paragraph(formatted_dt, cell_style)
         ])
 
-    # Totals row in the main table
-    table_data.append([
-        Paragraph("<b>Total</b>", bold_cell),
-        Paragraph("", cell_style),
-        Paragraph("", cell_style),
-        Paragraph("", cell_style),
-        Paragraph("", cell_style),
-        Paragraph(str(sum(int(b.get("item_count", 0)) for b in bills)), bold_cell_right),
-        Paragraph(f"<b>₹ {total_sales:,.2f}</b>", bold_cell_right)
-    ])
-
-    # Widths should sum to roughly A4 width - margins (210 - 24 = 186mm)
-    bills_tbl = Table(table_data, colWidths=[12*mm, 32*mm, 22*mm, 65*mm, 18*mm, 15*mm, 22*mm])
+    # Widths should sum to exactly 186mm (A4 width 210mm - 24mm margins)
+    bills_tbl = Table(table_data, colWidths=[12*mm, 24*mm, 46*mm, 14*mm, 24*mm, 42*mm, 24*mm])
     bills_tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,0), navy),
-        ("GRID", (0,0), (-1,-1), 0.4, colors.HexColor("#CCCCCC")),
-        ("ROWBACKGROUNDS", (0,1), (-1,-2), [colors.white, light]),
-        ("BACKGROUND", (0,-1), (-1,-1), colors.HexColor("#E7ECF6")),
+        ("BACKGROUND", (0,0), (-1,0), brand_green),
+        ("GRID", (0,0), (-1,-1), 0.5, colors.black),
         ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
-        ("TOPPADDING", (0,0), (-1,-1), 5),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 5),
+        ("TOPPADDING", (0,0), (-1,-1), 8),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 8),
+        ("LEFTPADDING", (0,0), (-1,-1), 6),
+        ("RIGHTPADDING", (0,0), (-1,-1), 6),
     ]))
     story.append(bills_tbl)
     

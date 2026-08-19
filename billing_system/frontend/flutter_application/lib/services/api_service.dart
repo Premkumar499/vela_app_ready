@@ -27,11 +27,10 @@ class ApiResult<T> {
         isOffline = false;
 }
 
-/// Central HTTP client for the Flask backend.
-/// Falls back to [LocalData] when the backend is unreachable so the UI
-/// always shows meaningful data.
 class ApiService {
-  static final http.Client _client = http.Client();
+  static http.Client client = http.Client();
+  static http.Client get _client => client;
+
 
   static Map<String, String> get _headers => {
         'Content-Type': 'application/json',

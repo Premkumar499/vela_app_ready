@@ -66,11 +66,17 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Row(
-          children: [
+        title: Row(
+          children: const [
             Icon(Icons.admin_panel_settings, size: 22),
             SizedBox(width: 8),
-            Text('Admin Panel'),
+            Flexible(
+              child: Text(
+                'Admin Panel',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
           ],
         ),
         actions: [
@@ -252,6 +258,8 @@ class _WelcomeBanner extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   userName.isNotEmpty ? 'Welcome, $userName' : 'ERP Billing System · Full Access',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontSize: 13, color: Colors.white70),
                 ),
                 const SizedBox(height: 16),

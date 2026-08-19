@@ -13,6 +13,7 @@ import '../widgets/pos_product_card.dart';
 import '../widgets/pos_summary_section.dart';
 import '../widgets/bilingual_bill_dashboard.dart';
 import '../models/invoice_model.dart';
+import '../widgets/toast_notification.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MAIN SCREEN
@@ -44,18 +45,8 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
   Timer? _errorTimer;
 
   void _showErrorMessage(String? msg) {
-    _errorTimer?.cancel();
-    setState(() {
-      _errorMessage = msg;
-    });
     if (msg != null && msg.isNotEmpty) {
-      _errorTimer = Timer(const Duration(seconds: 5), () {
-        if (mounted) {
-          setState(() {
-            _errorMessage = null;
-          });
-        }
-      });
+      showToast(context, msg, isError: true);
     }
   }
 
@@ -267,14 +258,7 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
 
   void _snack(String msg, {bool error = false}) {
     if (!mounted) return;
-    if (error) {
-      _showErrorMessage(msg);
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(msg),
-        backgroundColor: PosTheme.success,
-      ));
-    }
+    showToast(context, msg, isError: error);
   }
 
   // ─── Build ─────────────────────────────────────────────────────────────────
@@ -329,51 +313,6 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
       // ── Body: responsive layout ──────────────────────────────────────────
       body: Column(
         children: [
-          if (_errorMessage != null)
-            Align(
-              alignment: Alignment.topCenter,
-              child: Container(
-                constraints: const BoxConstraints(maxWidth: 550),
-                margin: const EdgeInsets.only(top: 10, bottom: 2),
-                decoration: BoxDecoration(
-                  color: PosTheme.danger,
-                  borderRadius: BorderRadius.circular(PosTheme.radiusSm),
-                  boxShadow: [
-                    BoxShadow(
-                      color: PosTheme.danger.withValues(alpha: 0.15),
-                      blurRadius: 6,
-                      offset: const Offset(0, 3),
-                    ),
-                  ],
-                ),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 16),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        _errorMessage!,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    InkWell(
-                      onTap: () => _showErrorMessage(null),
-                      child: const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                        child: Icon(Icons.close, color: Colors.white70, size: 16),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
@@ -950,56 +889,50 @@ class _BillHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(
-        horizontal: PosTheme.padLg,
-        vertical: PosTheme.padMd,
+        horizontal: 16,
+        vertical: 12,
       ),
       decoration: const BoxDecoration(
-        color: PosTheme.primarySoft,
-        border: Border(bottom: BorderSide(color: PosTheme.border)),
+        color: Color(0xFFEBF6ED),
+        border: Border(bottom: BorderSide(color: Color(0xFFC8E6C9))),
       ),
       child: Row(
         children: [
-          // Invoice icon
+          // Green Card Icon
           Container(
-            width: 40, height: 40,
+            width: 36, height: 36,
             decoration: BoxDecoration(
-              color: PosTheme.primary,
-              borderRadius: BorderRadius.circular(PosTheme.radiusSm),
+              color: const Color(0xFF2E7D32),
+              borderRadius: BorderRadius.circular(8),
             ),
             child: const Icon(Icons.receipt_long_rounded,
-                color: Colors.white, size: 20),
+                color: Colors.white, size: 18),
           ),
           const SizedBox(width: 12),
+          // Invoice/Draft text
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  invoiceNum,
-                  style: PosTheme.bodyBold.copyWith(
-                    color: PosTheme.primary, fontSize: 15,
-                  ),
-                ),
-                Text(
-                  customerName,
-                  style: PosTheme.small,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
+            child: Text(
+              invoiceNum,
+              style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF2E7D32),
+              ),
             ),
           ),
           // Item count badge
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
-              color: itemCount > 0 ? PosTheme.primary : PosTheme.border,
-              borderRadius: BorderRadius.circular(PosTheme.radiusXl),
+              color: const Color(0xFFDCDFE4),
+              borderRadius: BorderRadius.circular(12),
             ),
             child: Text(
               '$itemCount items',
               style: const TextStyle(
-                fontSize: 11, fontWeight: FontWeight.w700, color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: Colors.white,
               ),
             ),
           ),
@@ -1128,6 +1061,13 @@ class _CustomerDetailsInput extends StatefulWidget {
 class _CustomerDetailsInputState extends State<_CustomerDetailsInput> {
   final TextEditingController _nameCtrl  = TextEditingController();
   final TextEditingController _phoneCtrl = TextEditingController();
+  final FocusNode _nameFocus = FocusNode();
+  final FocusNode _phoneFocus = FocusNode();
+
+  OverlayEntry? _overlayEntry;
+  final LayerLink _layerLink = LayerLink();
+  List<Customer> _allCustomers = [];
+  List<Customer> _suggestions = [];
 
   @override
   void initState() {
@@ -1135,6 +1075,9 @@ class _CustomerDetailsInputState extends State<_CustomerDetailsInput> {
     final c = widget.provider.customer;
     if (c.name != 'Walk-in Customer') _nameCtrl.text = c.name;
     _phoneCtrl.text = widget.provider.customerPhone;
+    _loadCustomers();
+    _nameFocus.addListener(_onFocusChange);
+    _phoneFocus.addListener(_onFocusChange);
   }
 
   @override
@@ -1151,86 +1094,357 @@ class _CustomerDetailsInputState extends State<_CustomerDetailsInput> {
 
   @override
   void dispose() {
+    _nameFocus.removeListener(_onFocusChange);
+    _phoneFocus.removeListener(_onFocusChange);
+    _nameFocus.dispose();
+    _phoneFocus.dispose();
     _nameCtrl.dispose();
     _phoneCtrl.dispose();
+    _hideSuggestions();
     super.dispose();
   }
 
-  Future<void> _openNewCustomerForm() async {
-    final nameCtrl    = TextEditingController();
-    final phoneCtrl   = TextEditingController();
+  Future<void> _loadCustomers() async {
+    final result = await ApiService.getCustomers();
+    if (result.success && result.data != null) {
+      if (mounted) {
+        setState(() {
+          _allCustomers = result.data!;
+        });
+      }
+    }
+  }
+
+  void _onFocusChange() {
+    if (_nameFocus.hasFocus || _phoneFocus.hasFocus) {
+      _updateSuggestions();
+    } else {
+      Future.delayed(const Duration(milliseconds: 200), () {
+        if (mounted && !_nameFocus.hasFocus && !_phoneFocus.hasFocus) {
+          _hideSuggestions();
+        }
+      });
+    }
+  }
+
+  void _updateSuggestions() {
+    final nameQ = _nameCtrl.text.trim().toLowerCase();
+    final phoneQ = _phoneCtrl.text.trim().toLowerCase();
+
+    if (nameQ.isEmpty && phoneQ.isEmpty) {
+      _suggestions = [];
+      _hideSuggestions();
+      return;
+    }
+
+    _suggestions = _allCustomers.where((c) {
+      final matchesName = nameQ.isEmpty || c.name.toLowerCase().contains(nameQ);
+      final matchesPhone = phoneQ.isEmpty || c.phone.toLowerCase().contains(phoneQ);
+      return matchesName && matchesPhone;
+    }).toList();
+
+    if (_suggestions.isNotEmpty && (_nameFocus.hasFocus || _phoneFocus.hasFocus)) {
+      _showSuggestionsOverlay();
+    } else {
+      _hideSuggestions();
+    }
+  }
+
+  void _showSuggestionsOverlay() {
+    if (_overlayEntry != null) {
+      _overlayEntry!.markNeedsBuild();
+      return;
+    }
+
+    _overlayEntry = OverlayEntry(
+      builder: (context) {
+        return Positioned(
+          width: _layerLink.leaderSize?.width,
+          child: CompositedTransformFollower(
+            link: _layerLink,
+            showWhenUnlinked: false,
+            offset: Offset(0, _layerLink.leaderSize?.height ?? 44),
+            child: Material(
+              elevation: 8,
+              borderRadius: BorderRadius.circular(10),
+              color: Colors.white,
+              child: Container(
+                constraints: const BoxConstraints(maxHeight: 250),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  padding: EdgeInsets.zero,
+                  itemCount: _suggestions.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1, color: Color(0xFFE2E8F0)),
+                  itemBuilder: (context, index) {
+                    final customer = _suggestions[index];
+                    return InkWell(
+                      onTap: () {
+                        setState(() {
+                          _nameCtrl.text = customer.name;
+                          _phoneCtrl.text = customer.phone;
+                        });
+                        widget.provider.setCustomer(customer);
+                        widget.provider.setCustomerPhone(customer.phone);
+                        _nameFocus.unfocus();
+                        _phoneFocus.unfocus();
+                        _hideSuggestions();
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                        child: Row(
+                          children: [
+                            CircleAvatar(
+                              backgroundColor: const Color(0xFFE8F5E9),
+                              radius: 14,
+                              child: Text(
+                                customer.name.isNotEmpty ? customer.name[0].toUpperCase() : '?',
+                                style: const TextStyle(color: Color(0xFF2E7D32), fontWeight: FontWeight.bold, fontSize: 12),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    customer.name,
+                                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF1E293B)),
+                                  ),
+                                  if (customer.phone.isNotEmpty)
+                                    Text(
+                                      customer.phone,
+                                      style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    Overlay.of(context).insert(_overlayEntry!);
+  }
+
+  void _hideSuggestions() {
+    _overlayEntry?.remove();
+    _overlayEntry = null;
+  }
+
+  Future<void> _openNewCustomerForm({String? initialName, String? initialPhone}) async {
+    final nameCtrl    = TextEditingController(text: initialName);
+    final phoneCtrl   = TextEditingController(text: initialPhone);
     final addressCtrl = TextEditingController();
     bool saving = false;
 
     final created = await showDialog<Customer>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDlg) => AlertDialog(
-          title: const Text('New Customer',
-              style: TextStyle(fontWeight: FontWeight.w700)),
-          content: SingleChildScrollView(
-            child: Column(
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        elevation: 16,
+        child: Container(
+          width: 400,
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: StatefulBuilder(
+            builder: (ctx, setDlg) => Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Header
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: const BoxDecoration(
+                        color: Color(0xFFEBF6ED),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.person_add_rounded,
+                        color: Color(0xFF2E7D32),
+                        size: 24,
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    const Text(
+                      'New Customer',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF1E293B),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                // Name Field
                 TextField(
                   controller: nameCtrl,
-                  decoration: const InputDecoration(
-                      labelText: 'Name *', border: OutlineInputBorder()),
+                  style: const TextStyle(fontSize: 14, color: Color(0xFF1E293B)),
                   autofocus: true,
+                  decoration: InputDecoration(
+                    labelText: 'Customer Name *',
+                    labelStyle: const TextStyle(color: Color(0xFF64748B), fontSize: 13),
+                    hintText: 'Enter name',
+                    hintStyle: const TextStyle(color: Color(0xFF94A3B8)),
+                    prefixIcon: const Icon(Icons.person_outline_rounded, color: Color(0xFF64748B), size: 20),
+                    filled: true,
+                    fillColor: const Color(0xFFF8FAFC),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: Color(0xFF2E7D32), width: 1.5),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
+                // Phone Field
                 TextField(
                   controller: phoneCtrl,
                   keyboardType: TextInputType.phone,
-                  decoration: const InputDecoration(
-                      labelText: 'Phone', border: OutlineInputBorder()),
+                  style: const TextStyle(fontSize: 14, color: Color(0xFF1E293B)),
+                  decoration: InputDecoration(
+                    labelText: 'Phone Number',
+                    labelStyle: const TextStyle(color: Color(0xFF64748B), fontSize: 13),
+                    hintText: 'Enter phone number',
+                    hintStyle: const TextStyle(color: Color(0xFF94A3B8)),
+                    prefixIcon: const Icon(Icons.phone_outlined, color: Color(0xFF64748B), size: 20),
+                    filled: true,
+                    fillColor: const Color(0xFFF8FAFC),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: Color(0xFF2E7D32), width: 1.5),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
+                // Address Field
                 TextField(
                   controller: addressCtrl,
-                  decoration: const InputDecoration(
-                      labelText: 'Address', border: OutlineInputBorder()),
+                  style: const TextStyle(fontSize: 14, color: Color(0xFF1E293B)),
+                  decoration: InputDecoration(
+                    labelText: 'Address',
+                    labelStyle: const TextStyle(color: Color(0xFF64748B), fontSize: 13),
+                    hintText: 'Enter address',
+                    hintStyle: const TextStyle(color: Color(0xFF94A3B8)),
+                    prefixIcon: const Icon(Icons.location_on_outlined, color: Color(0xFF64748B), size: 20),
+                    filled: true,
+                    fillColor: const Color(0xFFF8FAFC),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: Color(0xFF2E7D32), width: 1.5),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  ),
+                ),
+                const SizedBox(height: 28),
+                // Actions
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    SizedBox(
+                      height: 44,
+                      child: TextButton(
+                        onPressed: saving ? null : () => Navigator.pop(ctx),
+                        style: TextButton.styleFrom(
+                          foregroundColor: const Color(0xFF64748B),
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text(
+                          'Cancel',
+                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    SizedBox(
+                      height: 44,
+                      child: ElevatedButton(
+                        onPressed: saving
+                            ? null
+                            : () async {
+                                final name = nameCtrl.text.trim();
+                                if (name.isEmpty) return;
+                                setDlg(() => saving = true);
+                                final result = await ApiService.createCustomer(
+                                  name:    name,
+                                  phone:   phoneCtrl.text.trim(),
+                                  email:   '',
+                                  address: addressCtrl.text.trim(),
+                                );
+                                if (!ctx.mounted) return;
+                                if (result.success) {
+                                  Navigator.pop(ctx, result.data);
+                                } else {
+                                  setDlg(() => saving = false);
+                                  ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                                    content: Text(result.error ?? 'Failed to save customer'),
+                                    backgroundColor: PosTheme.danger,
+                                  ));
+                                }
+                              },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF2E7D32),
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          padding: const EdgeInsets.symmetric(horizontal: 24),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: saving
+                            ? const SizedBox(
+                                width: 20, height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.5,
+                                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                ),
+                              )
+                            : const Text(
+                                'Save Customer',
+                                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+                              ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
-          actions: [
-            TextButton(
-              onPressed: saving ? null : () => Navigator.pop(ctx),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: saving
-                  ? null
-                  : () async {
-                      final name = nameCtrl.text.trim();
-                      if (name.isEmpty) return;
-                      setDlg(() => saving = true);
-                      final result = await ApiService.createCustomer(
-                        name:    name,
-                        phone:   phoneCtrl.text.trim(),
-                        email:   '',
-                        address: addressCtrl.text.trim(),
-                      );
-                      if (!ctx.mounted) return;
-                      if (result.success) {
-                        Navigator.pop(ctx, result.data);
-                      } else {
-                        setDlg(() => saving = false);
-                        ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-                          content: Text(result.error ?? 'Failed to save customer'),
-                          backgroundColor: PosTheme.danger,
-                        ));
-                      }
-                    },
-              child: saving
-                  ? const SizedBox(
-                      width: 16, height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Text('Save'),
-            ),
-          ],
         ),
       ),
     );
@@ -1246,23 +1460,27 @@ class _CustomerDetailsInputState extends State<_CustomerDetailsInput> {
       });
       widget.provider.setCustomer(created);
       widget.provider.setCustomerPhone(created.phone);
+      _loadCustomers();
     }
   }
 
-  Future<void> _openCustomerPicker() async {
+  Future<void> _openCustomerPicker({String? initialQuery}) async {
     final selected = await showModalBottomSheet<Customer>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => const _CustomerPickerSheet(),
+      builder: (_) => _CustomerPickerSheet(initialQuery: initialQuery),
     );
 
     if (selected == null || !mounted) return;
 
     // "new" sentinel — open form to create customer in DB
     if (selected.id == '-1') {
-      await _openNewCustomerForm();
+      await _openNewCustomerForm(
+        initialName: _nameCtrl.text,
+        initialPhone: _phoneCtrl.text,
+      );
       return;
     }
 
@@ -1272,127 +1490,124 @@ class _CustomerDetailsInputState extends State<_CustomerDetailsInput> {
     });
     widget.provider.setCustomer(selected);
     widget.provider.setCustomerPhone(selected.phone);
+    _loadCustomers();
   }
 
   @override
   Widget build(BuildContext context) {
-    final customerName = _nameCtrl.text.isNotEmpty
-        ? _nameCtrl.text
-        : 'Walk-in Customer';
-    final phone = _phoneCtrl.text;
-    final hasCustomer = _nameCtrl.text.isNotEmpty;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(
-          horizontal: PosTheme.padMd, vertical: 10),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: PosTheme.border)),
-      ),
-      child: Row(
-        children: [
-          // ── Customer selector box ──────────────────────────────────
-          Expanded(
-            flex: 3,
-            child: GestureDetector(
-              onTap: _openCustomerPicker,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 10),
-                decoration: BoxDecoration(
-                  color: hasCustomer
-                      ? PosTheme.primary.withValues(alpha: 0.05)
-                      : const Color(0xFFF5F7FA),
-                  borderRadius:
-                      BorderRadius.circular(PosTheme.radiusSm),
-                  border: Border.all(
-                    color: hasCustomer
-                        ? PosTheme.primary
-                        : PosTheme.border,
-                    width: hasCustomer ? 1.5 : 1,
+    return CompositedTransformTarget(
+      link: _layerLink,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          border: Border(bottom: BorderSide(color: PosTheme.border)),
+        ),
+        child: Row(
+          children: [
+            // ── Add New Customer Button (Left Side) ──────────────────────────
+            IconButton(
+              onPressed: () => _openNewCustomerForm(
+                initialName: _nameCtrl.text,
+                initialPhone: _phoneCtrl.text,
+              ),
+              icon: const Icon(Icons.person_add_alt_1_rounded, color: Color(0xFF2E7D32), size: 20),
+              tooltip: 'Add New Customer',
+              constraints: const BoxConstraints(),
+              padding: const EdgeInsets.only(right: 8),
+            ),
+            
+            // ── Customer Name Input ──────────────────────────────────
+            Expanded(
+              child: SizedBox(
+                height: 44,
+                child: TextField(
+                  controller: _nameCtrl,
+                  focusNode: _nameFocus,
+                  style: const TextStyle(fontSize: 14, color: Color(0xFF1E293B), fontWeight: FontWeight.w500),
+                  decoration: InputDecoration(
+                    hintText: 'Customer Name',
+                    hintStyle: const TextStyle(color: Color(0xFF94A3B8), fontSize: 14),
+                    prefixIcon: const Icon(Icons.person_outline_rounded, color: Color(0xFF64748B), size: 20),
+                    filled: true,
+                    fillColor: const Color(0xFFF1F5F9),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide.none,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   ),
-                ),
-                child: Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 14,
-                      backgroundColor: hasCustomer
-                          ? PosTheme.primary
-                          : PosTheme.border,
-                      child: Text(
-                        hasCustomer
-                            ? customerName[0].toUpperCase()
-                            : '?',
-                        style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.white),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            customerName,
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: hasCustomer
-                                  ? PosTheme.primary
-                                  : PosTheme.textSecondary,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          if (phone.isNotEmpty)
-                            Text(
-                              phone,
-                              style: PosTheme.small.copyWith(
-                                  color: PosTheme.textSecondary),
-                            )
-                          else
-                            Text(
-                              'Tap to select customer',
-                              style: PosTheme.small.copyWith(
-                                  color: PosTheme.textHint),
-                            ),
-                        ],
-                      ),
-                    ),
-                    const Icon(Icons.keyboard_arrow_down_rounded,
-                        size: 18, color: PosTheme.textHint),
-                  ],
+                  onChanged: (val) {
+                    final current = widget.provider.customer;
+                    widget.provider.setCustomer(Customer(
+                      id: current.id,
+                      name: val,
+                      phone: current.phone,
+                      address: current.address,
+                      area: current.area,
+                      gstin: current.gstin,
+                      creditLimit: current.creditLimit,
+                      balance: current.balance,
+                    ));
+                    _updateSuggestions();
+                  },
                 ),
               ),
             ),
-          ),
-          const SizedBox(width: 8),
-          // ── Add new customer button ────────────────────────────────
-          SizedBox(
-            height: 46,
-            child: ElevatedButton.icon(
-              onPressed: _openNewCustomerForm,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: PosTheme.primary,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 0),
-                shape: RoundedRectangleBorder(
-                  borderRadius:
-                      BorderRadius.circular(PosTheme.radiusSm),
-                ),
-                elevation: 0,
+            
+            // ── Search Icon Button ──────────────────────────────────
+            IconButton(
+              onPressed: () => _openCustomerPicker(
+                initialQuery: _nameCtrl.text.isNotEmpty ? _nameCtrl.text : _phoneCtrl.text,
               ),
-              icon: const Icon(Icons.person_add_alt_1_rounded, size: 16),
-              label: const Text('Add',
-                  style: TextStyle(
-                      fontSize: 12, fontWeight: FontWeight.w600)),
+              icon: const Icon(Icons.search_rounded, color: Color(0xFF64748B), size: 22),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              constraints: const BoxConstraints(),
+              splashRadius: 20,
+              tooltip: 'Search Customer',
             ),
-          ),
-        ],
+            
+            // ── Phone Input ─────────────────────────────────────────
+            Expanded(
+              child: SizedBox(
+                height: 44,
+                child: TextField(
+                  controller: _phoneCtrl,
+                  focusNode: _phoneFocus,
+                  keyboardType: TextInputType.phone,
+                  style: const TextStyle(fontSize: 14, color: Color(0xFF1E293B), fontWeight: FontWeight.w500),
+                  decoration: InputDecoration(
+                    hintText: 'Phone',
+                    hintStyle: const TextStyle(color: Color(0xFF94A3B8), fontSize: 14),
+                    prefixIcon: const Icon(Icons.phone_outlined, color: Color(0xFF64748B), size: 18),
+                    filled: true,
+                    fillColor: const Color(0xFFF1F5F9),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide.none,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  ),
+                  onChanged: (val) {
+                    widget.provider.setCustomerPhone(val);
+                    final current = widget.provider.customer;
+                    widget.provider.setCustomer(Customer(
+                      id: current.id,
+                      name: current.name,
+                      phone: val,
+                      address: current.address,
+                      area: current.area,
+                      gstin: current.gstin,
+                      creditLimit: current.creditLimit,
+                      balance: current.balance,
+                    ));
+                    _updateSuggestions();
+                  },
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1400,7 +1615,8 @@ class _CustomerDetailsInputState extends State<_CustomerDetailsInput> {
 
 // ─── Customer Picker Bottom Sheet ─────────────────────────────────────────────
 class _CustomerPickerSheet extends StatefulWidget {
-  const _CustomerPickerSheet();
+  final String? initialQuery;
+  const _CustomerPickerSheet({this.initialQuery});
 
   @override
   State<_CustomerPickerSheet> createState() => _CustomerPickerSheetState();
@@ -1415,6 +1631,9 @@ class _CustomerPickerSheetState extends State<_CustomerPickerSheet> {
   @override
   void initState() {
     super.initState();
+    if (widget.initialQuery != null) {
+      _searchCtrl.text = widget.initialQuery!;
+    }
     _load();
     _searchCtrl.addListener(_filter);
   }
