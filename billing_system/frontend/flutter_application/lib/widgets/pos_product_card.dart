@@ -48,11 +48,17 @@ IconData _categoryIcon(String category) {
 class PosProductCard extends StatefulWidget {
   final Product product;
   final VoidCallback onTap;
+  final num cartQuantity;
+  final VoidCallback? onIncrease;
+  final VoidCallback? onDecrease;
 
   const PosProductCard({
     super.key,
     required this.product,
     required this.onTap,
+    this.cartQuantity = 0,
+    this.onIncrease,
+    this.onDecrease,
   });
 
   @override
@@ -113,95 +119,283 @@ class _PosProductCardState extends State<PosProductCard>
             duration: const Duration(milliseconds: 140),
             decoration: _hovered ? PosTheme.cardHovered : PosTheme.card,
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                // ── Avatar ───────────────────────────────────────────
-                _Avatar(
-                  initial:  _initial,
-                  color:    _color,
-                  icon:     _categoryIcon(widget.product.category),
-                  imageUrl: widget.product.imageUrl,
-                ),
-                const SizedBox(width: 8),
+            child: LayoutBuilder(
+              builder: (context, cardConstraints) {
+                final isNarrow = cardConstraints.maxWidth < 220;
 
-                // ── Info ─────────────────────────────────────────────
-                Expanded(
-                  child: Column(
+                if (isNarrow) {
+                  return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      // Name only (no GST badge)
-                      Text(
-                        widget.product.name,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: PosTheme.textPrimary,
-                          height: 1.2,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
+                      // Name & Category
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            widget.product.name,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: PosTheme.textPrimary,
+                              height: 1.15,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 1),
+                          Text(
+                            widget.product.category,
+                            style: const TextStyle(
+                              fontSize: 9,
+                              color: PosTheme.textSecondary,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 2),
-
-                      // Category
-                      Text(
-                        widget.product.category,
-                        style: const TextStyle(
-                          fontSize: 10,
-                          color: PosTheme.textSecondary,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                      // Price & Stock
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            '₹${widget.product.price.toStringAsFixed(0)}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                              color: _color,
+                            ),
+                          ),
+                          _StockPill(
+                            stock:  widget.product.availableStock,
+                            unit:   widget.product.unit,
+                            isLow:  _lowStock,
+                            compact: true,
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 4),
-
-                      // Price + Stock row using Wrap
+                      // Stepper or Add button (full width)
                       SizedBox(
                         width: double.infinity,
-                        child: Wrap(
-                          alignment: WrapAlignment.spaceBetween,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          spacing: 4,
-                          runSpacing: 2,
-                          children: [
-                            // Price subrow
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.baseline,
-                              textBaseline: TextBaseline.alphabetic,
+                        child: widget.cartQuantity > 0 && widget.onIncrease != null && widget.onDecrease != null
+                            ? _CardQtyStepper(
+                                quantity: widget.cartQuantity,
+                                onIncrease: widget.onIncrease!,
+                                onDecrease: widget.onDecrease!,
+                                compact: true,
+                              )
+                            : _AddButton(onTap: widget.onTap, compact: true),
+                      ),
+                    ],
+                  );
+                }
+
+                // Standard horizontal layout
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    // ── Avatar ───────────────────────────────────────────
+                    _Avatar(
+                      initial:  _initial,
+                      color:    _color,
+                      icon:     _categoryIcon(widget.product.category),
+                      imageUrl: widget.product.imageUrl,
+                    ),
+                    const SizedBox(width: 8),
+
+                    // ── Info ─────────────────────────────────────────────
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            widget.product.name,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: PosTheme.textPrimary,
+                              height: 1.2,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            widget.product.category,
+                            style: const TextStyle(
+                              fontSize: 10,
+                              color: PosTheme.textSecondary,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 4),
+                          SizedBox(
+                            width: double.infinity,
+                            child: Wrap(
+                              alignment: WrapAlignment.spaceBetween,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              spacing: 4,
+                              runSpacing: 2,
                               children: [
-                                Text(
-                                  '₹${widget.product.price.toStringAsFixed(2)}',
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w800,
-                                    color: _color,
-                                  ),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.baseline,
+                                  textBaseline: TextBaseline.alphabetic,
+                                  children: [
+                                    Text(
+                                      '₹${widget.product.price.toStringAsFixed(2)}',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w800,
+                                        color: _color,
+                                      ),
+                                    ),
+                                    Text(
+                                      ' /${widget.product.unit}',
+                                      style: const TextStyle(
+                                        fontSize: 10,
+                                        color: PosTheme.textHint,
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                                Text(
-                                  ' /${widget.product.unit}',
-                                  style: const TextStyle(
-                                    fontSize: 10,
-                                    color: PosTheme.textHint,
-                                  ),
+                                _StockPill(
+                                  stock:  widget.product.availableStock,
+                                  unit:   widget.product.unit,
+                                  isLow:  _lowStock,
                                 ),
                               ],
                             ),
-                            // Stock pill
-                            _StockPill(
-                              stock:  widget.product.availableStock,
-                              unit:   widget.product.unit,
-                              isLow:  _lowStock,
-                            ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                ),
-              ],
+                    ),
+                    const SizedBox(width: 8),
+
+                    // ── Stepper or Add button ──
+                    if (widget.cartQuantity > 0 && widget.onIncrease != null && widget.onDecrease != null)
+                      _CardQtyStepper(
+                        quantity: widget.cartQuantity,
+                        onIncrease: widget.onIncrease!,
+                        onDecrease: widget.onDecrease!,
+                      )
+                    else
+                      _AddButton(onTap: widget.onTap),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CardQtyStepper extends StatelessWidget {
+  final num quantity;
+  final VoidCallback onIncrease;
+  final VoidCallback onDecrease;
+  final bool compact;
+
+  const _CardQtyStepper({
+    required this.quantity,
+    required this.onIncrease,
+    required this.onDecrease,
+    this.compact = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final qtyStr = quantity.truncateToDouble() == quantity
+        ? quantity.toStringAsFixed(0)
+        : quantity.toStringAsFixed(1);
+
+    return Container(
+      height: compact ? 26 : 32,
+      decoration: BoxDecoration(
+        color: const Color(0xFFE8F5E9),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: PosTheme.primary.withValues(alpha: 0.2)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          // Decrease
+          GestureDetector(
+            onTap: onDecrease,
+            behavior: HitTestBehavior.opaque,
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: compact ? 6 : 8, vertical: compact ? 4 : 6),
+              child: Icon(
+                Icons.remove_rounded,
+                size: compact ? 12 : 16,
+                color: PosTheme.primary,
+              ),
+            ),
+          ),
+          // Quantity
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2),
+            child: Text(
+              qtyStr,
+              style: TextStyle(
+                fontSize: compact ? 11 : 13,
+                fontWeight: FontWeight.bold,
+                color: PosTheme.primary,
+              ),
+            ),
+          ),
+          // Increase
+          GestureDetector(
+            onTap: onIncrease,
+            behavior: HitTestBehavior.opaque,
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: compact ? 6 : 8, vertical: compact ? 4 : 6),
+              child: Icon(
+                Icons.add_rounded,
+                size: compact ? 12 : 16,
+                color: PosTheme.primary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AddButton extends StatelessWidget {
+  final VoidCallback onTap;
+  final bool compact;
+  const _AddButton({required this.onTap, this.compact = false});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        height: compact ? 26 : 30,
+        padding: EdgeInsets.symmetric(horizontal: compact ? 8 : 14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: PosTheme.primary.withValues(alpha: 0.5)),
+        ),
+        child: Center(
+          child: Text(
+            'ADD',
+            style: TextStyle(
+              fontSize: compact ? 10 : 11,
+              fontWeight: FontWeight.bold,
+              color: PosTheme.primary,
+              letterSpacing: 0.5,
             ),
           ),
         ),
@@ -282,11 +476,13 @@ class _StockPill extends StatelessWidget {
   final double stock;
   final String unit;
   final bool   isLow;
+  final bool   compact;
 
   const _StockPill({
     required this.stock,
     required this.unit,
     required this.isLow,
+    this.compact = false,
   });
 
   @override
@@ -294,7 +490,7 @@ class _StockPill extends StatelessWidget {
     final fg = isLow ? PosTheme.warning : PosTheme.success;
     final bg = isLow ? PosTheme.warningLight : PosTheme.successLight;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1.5),
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(4),
@@ -302,16 +498,18 @@ class _StockPill extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            isLow ? Icons.warning_amber_rounded : Icons.check_circle_outline,
-            size: 9,
-            color: fg,
-          ),
-          const SizedBox(width: 2),
+          if (!compact) ...[
+            Icon(
+              isLow ? Icons.warning_amber_rounded : Icons.check_circle_outline,
+              size: 9,
+              color: fg,
+            ),
+            const SizedBox(width: 2),
+          ],
           Text(
             '${stock.toStringAsFixed(0)} $unit',
             style: TextStyle(
-              fontSize: 9,
+              fontSize: compact ? 8 : 9,
               fontWeight: FontWeight.w600,
               color: fg,
             ),

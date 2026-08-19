@@ -74,6 +74,8 @@ class _PayMethodChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isNarrow = MediaQuery.of(context).size.width < 600;
+
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
       curve: Curves.easeOut,
@@ -90,37 +92,39 @@ class _PayMethodChip extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(PosTheme.radiusMd),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          padding: EdgeInsets.symmetric(horizontal: isNarrow ? 10 : 16, vertical: 10),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Radio indicator
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                width: 16,
-                height: 16,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: isSelected ? Colors.white : PosTheme.border,
-                    width: 2,
+              if (!isNarrow) ...[
+                // Radio indicator
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  width: 16,
+                  height: 16,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: isSelected ? Colors.white : PosTheme.border,
+                      width: 2,
+                    ),
+                    color: isSelected ? Colors.white : Colors.transparent,
                   ),
-                  color: isSelected ? Colors.white : Colors.transparent,
-                ),
-                child: isSelected
-                    ? Center(
-                        child: Container(
-                          width: 6,
-                          height: 6,
-                          decoration: const BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: PosTheme.primary,
+                  child: isSelected
+                      ? Center(
+                          child: Container(
+                            width: 6,
+                            height: 6,
+                            decoration: const BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: PosTheme.primary,
+                            ),
                           ),
-                        ),
-                      )
-                    : null,
-              ),
-              const SizedBox(width: 8),
+                        )
+                      : null,
+                ),
+                const SizedBox(width: 8),
+              ],
               Icon(
                 method.icon,
                 size: 16,

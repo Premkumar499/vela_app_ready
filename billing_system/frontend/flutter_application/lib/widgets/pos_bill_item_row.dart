@@ -39,7 +39,7 @@ class PosBillItemRow extends StatelessWidget {
         ),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final narrow = constraints.maxWidth < 340;
+            final narrow = constraints.maxWidth < 500;
             if (narrow) return _buildNarrow(context);
             return _buildWide(context);
           },
@@ -65,17 +65,6 @@ class PosBillItemRow extends StatelessWidget {
     );
   }
 
-  // ── Amount text that shrinks instead of overflowing ────────────────────
-  Widget _buildAmount(String text, TextStyle style) {
-    return Flexible(
-      child: FittedBox(
-        fit: BoxFit.scaleDown,
-        alignment: Alignment.centerRight,
-        child: Text(text, style: style, maxLines: 1),
-      ),
-    );
-  }
-
   // ── Narrow (phone): name+delete on top, stepper+amounts below ──────────
   Widget _buildNarrow(BuildContext context) {
     return Column(
@@ -93,24 +82,43 @@ class PosBillItemRow extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            Expanded(child: _buildNameColumn()),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.productName,
+                    style: PosTheme.bodyBold.copyWith(fontSize: 13),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '₹${item.rate.toStringAsFixed(2)} / ${item.unit}',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: PosTheme.textSecondary,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
             const SizedBox(width: 8),
             _DeleteButton(onDelete: onDelete),
           ],
         ),
         const SizedBox(height: 8),
         Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             _QtyStepper(item: item, onIncrease: onIncrease, onDecrease: onDecrease),
-            const SizedBox(width: 12),
-            _buildAmount(
-              '₹${item.rate.toStringAsFixed(2)}',
-              PosTheme.small.copyWith(color: PosTheme.textSecondary),
-            ),
-            const SizedBox(width: 12),
-            _buildAmount(
+            Text(
               '₹${item.total.toStringAsFixed(2)}',
-              PosTheme.bodyBold.copyWith(color: PosTheme.primary, fontSize: 14),
+              style: PosTheme.bodyBold.copyWith(
+                color: PosTheme.primary,
+                fontSize: 14,
+              ),
             ),
           ],
         ),
@@ -352,31 +360,38 @@ class PosEmptyCartPlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isNarrow = MediaQuery.of(context).size.width < 600;
+
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 80,
-            height: 80,
-            decoration: BoxDecoration(
+            width: isNarrow ? 48 : 80,
+            height: isNarrow ? 48 : 80,
+            decoration: const BoxDecoration(
               color: PosTheme.primarySoft,
               shape: BoxShape.circle,
             ),
-            child: const Icon(
+            child: Icon(
               Icons.receipt_long_outlined,
-              size: 38,
+              size: isNarrow ? 24 : 38,
               color: PosTheme.primary,
             ),
           ),
-          const SizedBox(height: 16),
-          Text('No items added', style: PosTheme.bodyBold),
-          const SizedBox(height: 6),
+          SizedBox(height: isNarrow ? 8 : 16),
           Text(
-            'Tap a product to add it\nto the current bill',
-            style: PosTheme.small,
-            textAlign: TextAlign.center,
+            'No items added',
+            style: isNarrow ? PosTheme.bodyBold.copyWith(fontSize: 13) : PosTheme.bodyBold,
           ),
+          if (!isNarrow) ...[
+            const SizedBox(height: 6),
+            const Text(
+              'Tap a product to add it\nto the current bill',
+              style: PosTheme.small,
+              textAlign: TextAlign.center,
+            ),
+          ],
         ],
       ),
     );

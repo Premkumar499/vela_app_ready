@@ -41,8 +41,6 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
   // ── Bill state ───────────────────────────────────────────────────────────
   bool _isSaving = false;
   String _invoiceNum = 'DRAFT';
-  String? _errorMessage;
-  Timer? _errorTimer;
 
   void _showErrorMessage(String? msg) {
     if (msg != null && msg.isNotEmpty) {
@@ -59,7 +57,6 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
 
   @override
   void dispose() {
-    _errorTimer?.cancel();
     _searchCtrl.removeListener(_applyFilter);
     _searchCtrl.dispose();
     _searchFocus.dispose();
@@ -261,22 +258,49 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
     showToast(context, msg, isError: error);
   }
 
+  Future<bool> _confirmExit() async {
+    final prov = context.read<BillingProvider>();
+    if (prov.itemCount == 0) {
+      return true;
+    }
+    final discard = await showDialog<bool>(
+      context: context,
+      builder: (_) => _ConfirmDialog(
+        title: 'Exit Billing',
+        message: 'You have active items in your cart. Leaving this screen will cancel the current bill and release all reserved stock. Exit anyway?',
+        danger: true,
+        onConfirm: () {
+          Navigator.of(context).pop(true);
+        },
+      ),
+    );
+    if (discard == true) {
+      await prov.cancelBillWithRelease();
+      return true;
+    }
+    return false;
+  }
+
   // ─── Build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<BillingProvider>();
 
-    return Scaffold(
-      backgroundColor: PosTheme.background,
-      // ── App bar ──────────────────────────────────────────────────────────
-      appBar: AppBar(
-        backgroundColor: PosTheme.primary,
-        elevation: 0,
-        leading: Navigator.canPop(context)
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isWide = constraints.maxWidth >= 1000;
+
+        // Custom AppBar back action for mobile checkout screen
+        final leadingWidget = Navigator.canPop(context)
             ? IconButton(
                 icon: const Icon(Icons.arrow_back_ios_new_rounded,
                     color: Colors.white, size: 20),
-                onPressed: () => Navigator.of(context).pop(),
+                onPressed: () async {
+                  final shouldPop = await _confirmExit();
+                  if (shouldPop && context.mounted) {
+                    Navigator.of(context).pop();
+                  }
+                },
                 tooltip: 'Back',
               )
             : Padding(
@@ -289,8 +313,9 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
                   child: const Icon(Icons.point_of_sale,
                       color: Colors.white, size: 20),
                 ),
-              ),
-        title: Column(
+              );
+
+        final appBarTitle = Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text('ERP Billing',
@@ -298,92 +323,93 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
             Text('New Bill · ${provider.customer.name}',
                 style: const TextStyle(fontSize: 11, color: Colors.white60)),
           ],
-        ),
-        actions: [
-          // New bill
-          TextButton.icon(
-            onPressed: _newBill,
-            icon: const Icon(Icons.add_circle_outline, size: 18, color: Colors.white70),
-            label: const Text('New Bill',
-                style: TextStyle(color: Colors.white70, fontSize: 13)),
-          ),
-          const SizedBox(width: 8),
-        ],
-      ),
-      // ── Body: responsive layout ──────────────────────────────────────────
-      body: Column(
-        children: [
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final isWide = constraints.maxWidth >= 1000;
-                final leftContent = _LeftPanel(
-                  categories:   _categories,
-                  selectedCat:  _selectedCat,
-                  products:     _filtered.take(_productsToShow).toList(),
-                  loading:      _loadingProds,
-                  searchCtrl:   _searchCtrl,
-                  searchFocus:  _searchFocus,
-                  onCategory:   _selectCategory,
-                  hasMore:      _productsToShow < _filtered.length,
-                  onLoadMore:   () {
-                    setState(() => _productsToShow += 100);
-                  },
-                  onProduct:    (p) async {
-                    final result = await provider.addProductWithReservation(p);
-                    if (!context.mounted) return;
-                    if (!result.success) {
-                      final available = result.remainingAvailable;
-                      final msg = available > 0
-                          ? 'Only ${available.toStringAsFixed(available.truncateToDouble() == available ? 0 : 1)} units are currently available'
-                          : '${p.name} is out of stock';
-                      _showErrorMessage(msg);
-                    } else {
-                      _showErrorMessage(null);
-                    }
-                  },
-                );
-                final rightContent = _RightPanel(
-                  provider:   provider,
-                  invoiceNum: _invoiceNum,
-                  isSaving:   _isSaving,
-                  onSave:     _saveBill,
-                  onCancel:   _cancelBill,
-                  scrollable: !isWide,
-                  onError: (msg) {
-                    _showErrorMessage(msg.isEmpty ? null : msg);
-                  },
-                );
-                if (isWide) {
-                  return Row(
+        );
+
+        final leftContent = _LeftPanel(
+          categories:   _categories,
+          selectedCat:  _selectedCat,
+          products:     _filtered.take(_productsToShow).toList(),
+          loading:      _loadingProds,
+          searchCtrl:   _searchCtrl,
+          searchFocus:  _searchFocus,
+          onCategory:   _selectCategory,
+          hasMore:      _productsToShow < _filtered.length,
+          onLoadMore:   () {
+            setState(() => _productsToShow += 100);
+          },
+          onProduct:    (p) async {
+            final result = await provider.addProductWithReservation(p);
+            if (!context.mounted) return;
+            if (!result.success) {
+              final available = result.remainingAvailable;
+              final msg = available > 0
+                  ? 'Only ${available.toStringAsFixed(available.truncateToDouble() == available ? 0 : 1)} units are currently available'
+                  : '${p.name} is out of stock';
+              _showErrorMessage(msg);
+            } else {
+              _showErrorMessage(null);
+            }
+          },
+        );
+
+        final rightContent = _RightPanel(
+          provider:   provider,
+          invoiceNum: _invoiceNum,
+          isSaving:   _isSaving,
+          onSave:     _saveBill,
+          onCancel:   _cancelBill,
+          scrollable: !isWide,
+          isMobileCheckout: false,
+          onError: (msg) {
+            _showErrorMessage(msg.isEmpty ? null : msg);
+          },
+        );
+
+        return PopScope(
+          canPop: false,
+          onPopInvokedWithResult: (didPop, result) async {
+            if (didPop) return;
+            final shouldPop = await _confirmExit();
+            if (shouldPop && context.mounted) {
+              Navigator.of(context).pop();
+            }
+          },
+          child: Scaffold(
+            backgroundColor: PosTheme.background,
+            appBar: AppBar(
+              backgroundColor: PosTheme.primary,
+              elevation: 0,
+              leading: leadingWidget,
+              title: appBarTitle,
+              actions: [
+                TextButton.icon(
+                  onPressed: _newBill,
+                  icon: const Icon(Icons.add_circle_outline, size: 18, color: Colors.white70),
+                  label: const Text('New Bill',
+                      style: TextStyle(color: Colors.white70, fontSize: 13)),
+                ),
+                const SizedBox(width: 8),
+              ],
+            ),
+            body: isWide
+                ? Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(flex: 65, child: leftContent),
                       Expanded(flex: 35, child: rightContent),
                     ],
-                  );
-                }
-                // Mobile / narrow: stack vertically with scrollable layout
-                return Column(
-                  children: [
-                    // Product selection takes the top portion
-                    Expanded(
-                      flex: 52,
-                      child: leftContent,
-                    ),
-                    Divider(height: 1, color: PosTheme.border),
-                    // Bill panel below
-                    Expanded(
-                      flex: 48,
-                      child: rightContent,
-                    ),
-                  ],
-                );
-              },
-            ),
+                  )
+                : Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(flex: 50, child: leftContent),
+                      const VerticalDivider(width: 1, thickness: 1, color: PosTheme.border),
+                      Expanded(flex: 50, child: rightContent),
+                    ],
+                  ),
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -418,14 +444,17 @@ class _LeftPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isMobile = MediaQuery.of(context).size.width < 600;
+    final pad = isMobile ? PosTheme.padSm : PosTheme.padLg;
+
     return Column(
       children: [
         // ── Search bar + filter row ────────────────────────────────────
         Container(
           color: PosTheme.surface,
-          padding: const EdgeInsets.fromLTRB(
-            PosTheme.padLg, PosTheme.padMd,
-            PosTheme.padLg, 0,
+          padding: EdgeInsets.fromLTRB(
+            pad, PosTheme.padMd,
+            pad, 0,
           ),
           child: _SearchBar(controller: searchCtrl, focusNode: searchFocus),
         ),
@@ -433,6 +462,7 @@ class _LeftPanel extends StatelessWidget {
           categories: categories,
           selected: selectedCat,
           onSelected: onCategory,
+          horizontalPadding: pad,
         ),
         const Divider(height: 1, color: PosTheme.border),
         // ── Product grid ───────────────────────────────────────────────
@@ -489,11 +519,13 @@ class _CategoryChips extends StatelessWidget {
   final List<String>         categories;
   final String               selected;
   final ValueChanged<String> onSelected;
+  final double               horizontalPadding;
 
   const _CategoryChips({
     required this.categories,
     required this.selected,
     required this.onSelected,
+    this.horizontalPadding = 16.0,
   });
 
   @override
@@ -501,7 +533,7 @@ class _CategoryChips extends StatelessWidget {
     return Container(
       height: 48,
       color: PosTheme.surface,
-      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: PosTheme.padLg),
+      padding: EdgeInsets.symmetric(vertical: 6, horizontal: horizontalPadding),
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: categories.length,
@@ -669,13 +701,55 @@ class _ProductGridState extends State<_ProductGrid> {
                 children: [
                   for (var ci = 0; ci < cols; ci++) ...[
                     if (ci < row.length)
-                      SizedBox(
-                        width: colW,
-                        height: _cardH,
-                        child: PosProductCard(
-                          product: row[ci],
-                          onTap:   () => widget.onTap(row[ci]),
-                        ),
+                      Builder(
+                        builder: (ctx) {
+                          final product = row[ci];
+                          final provider = ctx.watch<BillingProvider>();
+                          
+                          int cartIdx = -1;
+                          for (int idx = 0; idx < provider.items.length; idx++) {
+                            if (provider.items[idx].productId == product.id) {
+                              cartIdx = idx;
+                              break;
+                            }
+                          }
+                          final cartQty = cartIdx != -1 ? provider.items[cartIdx].quantity : 0;
+                          
+                          return SizedBox(
+                            width: colW,
+                            height: _cardH,
+                            child: PosProductCard(
+                              product: product,
+                              onTap:   () => widget.onTap(product),
+                              cartQuantity: cartQty,
+                              onIncrease: () async {
+                                final result = await provider.addProductWithReservation(product, quantity: 1);
+                                if (!result.success && ctx.mounted) {
+                                  final avail = result.remainingAvailable;
+                                  final msg = avail > 0
+                                      ? 'Only ${avail.toStringAsFixed(0)} units available'
+                                      : '${product.name} is out of stock';
+                                  ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                                    content: Text(msg),
+                                    backgroundColor: PosTheme.danger,
+                                    duration: const Duration(seconds: 3),
+                                  ));
+                                }
+                              },
+                              onDecrease: () async {
+                                if (cartIdx != -1) {
+                                  final item = provider.items[cartIdx];
+                                  if (item.quantity > 1) {
+                                    await provider.updateQuantityWithReservation(
+                                        cartIdx, item.quantity - 1, product);
+                                  } else {
+                                    await provider.removeItemWithRelease(cartIdx);
+                                  }
+                                }
+                              },
+                            ),
+                          );
+                        }
                       )
                     else
                       SizedBox(width: colW, height: _cardH), // empty filler
@@ -730,6 +804,7 @@ class _RightPanel extends StatelessWidget {
   /// On narrow screens the panel is squeezed into a fraction of the screen
   /// height, so the whole panel scrolls instead of overflowing.
   final bool scrollable;
+  final bool isMobileCheckout;
 
   const _RightPanel({
     required this.provider,
@@ -738,6 +813,7 @@ class _RightPanel extends StatelessWidget {
     required this.onSave,
     required this.onCancel,
     this.scrollable = false,
+    this.isMobileCheckout = false,
     this.onError,
   });
 
@@ -748,8 +824,8 @@ class _RightPanel extends StatelessWidget {
         ? const PosEmptyCartPlaceholder()
         : ListView.builder(
             padding: EdgeInsets.zero,
-            shrinkWrap: scrollable,
-            physics: scrollable
+            shrinkWrap: scrollable || isMobileCheckout,
+            physics: (scrollable || isMobileCheckout)
                 ? const NeverScrollableScrollPhysics()
                 : null,
             itemCount: provider.items.length,
@@ -804,6 +880,52 @@ class _RightPanel extends StatelessWidget {
             },
           );
 
+    if (isMobileCheckout) {
+      return Column(
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  // ── Bill header ─────────────────────────────────────────────
+                  _BillHeader(
+                    invoiceNum:  invoiceNum,
+                    customerName: provider.customer.name,
+                    itemCount:   provider.itemCount,
+                    paymentType: provider.paymentType,
+                  ),
+                  // ── Customer details input ─────────────────────────────────
+                  _CustomerDetailsInput(provider: provider),
+                  // ── Bill items list ────────────────────────────────────────
+                  itemsList,
+                  // ── Summary ────────────────────────────────────────────────
+                  PosSummarySection(
+                    subtotal:   provider.subtotal,
+                    grandTotal: provider.grandTotal,
+                  ),
+                  // ── Payment selector ───────────────────────────────────────
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: PosTheme.padSm),
+                    child: PosPaymentSelector(
+                      selected:  provider.paymentType,
+                      onChanged: provider.setPaymentType,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // ── Sticky Action buttons ──
+          _ActionButtons(
+            isSaving:  isSaving,
+            canSave:   provider.canSave,
+            onComplete: onSave,
+            onCancel:  onCancel,
+          ),
+        ],
+      );
+    }
+
     final panel = Column(
       children: [
         // ── Bill header ─────────────────────────────────────────────
@@ -816,11 +938,13 @@ class _RightPanel extends StatelessWidget {
         // ── Customer details input ─────────────────────────────────
         _CustomerDetailsInput(provider: provider),
         // ── Column labels ──────────────────────────────────────────
-        _BillTableHeader(),
+        if (MediaQuery.of(context).size.width >= 600) _BillTableHeader(),
         // ── Bill items list ────────────────────────────────────────
         if (scrollable)
           ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 260),
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.width < 600 ? 140.0 : 260.0,
+            ),
             child: itemsList,
           )
         else
@@ -1007,41 +1131,64 @@ class _ActionButtons extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isNarrow = MediaQuery.of(context).size.width < 600;
+
+    Widget cancelBtn;
+    Widget saveBtn;
+
+    if (isNarrow) {
+      cancelBtn = OutlinedButton(
+        onPressed: canSave ? onCancel : null,
+        style: PosTheme.dangerButton().copyWith(
+          padding: WidgetStateProperty.all(const EdgeInsets.symmetric(horizontal: 4, vertical: 8)),
+        ),
+        child: const Text('Cancel', style: TextStyle(fontSize: 12)),
+      );
+
+      saveBtn = ElevatedButton(
+        onPressed: canSave && !isSaving ? onComplete : null,
+        style: PosTheme.successButton().copyWith(
+          padding: WidgetStateProperty.all(const EdgeInsets.symmetric(horizontal: 4, vertical: 8)),
+        ),
+        child: isSaving
+            ? const SizedBox(
+                width: 14, height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+              )
+            : const Text('Complete', style: TextStyle(fontSize: 12)),
+      );
+    } else {
+      cancelBtn = OutlinedButton.icon(
+        onPressed: canSave ? onCancel : null,
+        style: PosTheme.dangerButton(),
+        icon: const Icon(Icons.close_rounded, size: 18),
+        label: const Text('Cancel'),
+      );
+
+      saveBtn = ElevatedButton.icon(
+        onPressed: canSave && !isSaving ? onComplete : null,
+        style: PosTheme.successButton(),
+        icon: isSaving
+            ? const SizedBox(
+                width: 16, height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+              )
+            : const Icon(Icons.check_circle_outline_rounded, size: 18),
+        label: Text(isSaving ? 'Saving…' : 'Complete'),
+      );
+    }
+
     return Container(
-      padding: const EdgeInsets.all(PosTheme.padMd),
+      padding: EdgeInsets.all(isNarrow ? PosTheme.padSm : PosTheme.padMd),
       decoration: const BoxDecoration(
         color: PosTheme.surface,
         border: Border(top: BorderSide(color: PosTheme.border)),
       ),
       child: Row(
         children: [
-          // Cancel
-          Expanded(
-            flex: 2,
-            child: OutlinedButton.icon(
-              onPressed: canSave ? onCancel : null,
-              style: PosTheme.dangerButton(),
-              icon: const Icon(Icons.close_rounded, size: 18),
-              label: const Text('Cancel'),
-            ),
-          ),
-          const SizedBox(width: 8),
-          // Complete only
-          Expanded(
-            flex: 4,
-            child: ElevatedButton.icon(
-              onPressed: canSave && !isSaving ? onComplete : null,
-              style: PosTheme.successButton(),
-              icon: isSaving
-                  ? const SizedBox(
-                      width: 16, height: 16,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white),
-                    )
-                  : const Icon(Icons.check_circle_outline_rounded, size: 18),
-              label: Text(isSaving ? 'Saving…' : 'Complete'),
-            ),
-          ),
+          Expanded(flex: 2, child: cancelBtn),
+          SizedBox(width: isNarrow ? 6 : 8),
+          Expanded(flex: 3, child: saveBtn),
         ],
       ),
     );
@@ -1495,6 +1642,8 @@ class _CustomerDetailsInputState extends State<_CustomerDetailsInput> {
 
   @override
   Widget build(BuildContext context) {
+    final isMobile = MediaQuery.of(context).size.width < 600;
+
     return CompositedTransformTarget(
       link: _layerLink,
       child: Container(
@@ -1503,111 +1652,209 @@ class _CustomerDetailsInputState extends State<_CustomerDetailsInput> {
           color: Colors.white,
           border: Border(bottom: BorderSide(color: PosTheme.border)),
         ),
-        child: Row(
-          children: [
-            // ── Add New Customer Button (Left Side) ──────────────────────────
-            IconButton(
-              onPressed: () => _openNewCustomerForm(
-                initialName: _nameCtrl.text,
-                initialPhone: _phoneCtrl.text,
-              ),
-              icon: const Icon(Icons.person_add_alt_1_rounded, color: Color(0xFF2E7D32), size: 20),
-              tooltip: 'Add New Customer',
-              constraints: const BoxConstraints(),
-              padding: const EdgeInsets.only(right: 8),
-            ),
-            
-            // ── Customer Name Input ──────────────────────────────────
-            Expanded(
-              child: SizedBox(
-                height: 44,
-                child: TextField(
-                  controller: _nameCtrl,
-                  focusNode: _nameFocus,
-                  style: const TextStyle(fontSize: 14, color: Color(0xFF1E293B), fontWeight: FontWeight.w500),
-                  decoration: InputDecoration(
-                    hintText: 'Customer Name',
-                    hintStyle: const TextStyle(color: Color(0xFF94A3B8), fontSize: 14),
-                    prefixIcon: const Icon(Icons.person_outline_rounded, color: Color(0xFF64748B), size: 20),
-                    filled: true,
-                    fillColor: const Color(0xFFF1F5F9),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: BorderSide.none,
+        child: isMobile
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // ── Customer Name Input ──────────────────────────────────
+                  SizedBox(
+                    height: 40,
+                    child: TextField(
+                      controller: _nameCtrl,
+                      focusNode: _nameFocus,
+                      style: const TextStyle(fontSize: 13, color: Color(0xFF1E293B), fontWeight: FontWeight.w500),
+                      decoration: InputDecoration(
+                        hintText: 'Customer Name',
+                        hintStyle: const TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
+                        filled: true,
+                        fillColor: const Color(0xFFF1F5F9),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: BorderSide.none,
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        suffixIcon: IconButton(
+                          onPressed: () => _openCustomerPicker(
+                            initialQuery: _nameCtrl.text.isNotEmpty ? _nameCtrl.text : _phoneCtrl.text,
+                          ),
+                          icon: const Icon(Icons.search_rounded, color: Color(0xFF64748B), size: 18),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          splashRadius: 16,
+                          tooltip: 'Search Customer',
+                        ),
+                      ),
+                      onChanged: (val) {
+                        final current = widget.provider.customer;
+                        widget.provider.setCustomer(Customer(
+                          id: current.id,
+                          name: val,
+                          phone: current.phone,
+                          address: current.address,
+                          area: current.area,
+                          gstin: current.gstin,
+                          creditLimit: current.creditLimit,
+                          balance: current.balance,
+                        ));
+                        _updateSuggestions();
+                      },
                     ),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   ),
-                  onChanged: (val) {
-                    final current = widget.provider.customer;
-                    widget.provider.setCustomer(Customer(
-                      id: current.id,
-                      name: val,
-                      phone: current.phone,
-                      address: current.address,
-                      area: current.area,
-                      gstin: current.gstin,
-                      creditLimit: current.creditLimit,
-                      balance: current.balance,
-                    ));
-                    _updateSuggestions();
-                  },
-                ),
-              ),
-            ),
-            
-            // ── Search Icon Button ──────────────────────────────────
-            IconButton(
-              onPressed: () => _openCustomerPicker(
-                initialQuery: _nameCtrl.text.isNotEmpty ? _nameCtrl.text : _phoneCtrl.text,
-              ),
-              icon: const Icon(Icons.search_rounded, color: Color(0xFF64748B), size: 22),
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              constraints: const BoxConstraints(),
-              splashRadius: 20,
-              tooltip: 'Search Customer',
-            ),
-            
-            // ── Phone Input ─────────────────────────────────────────
-            Expanded(
-              child: SizedBox(
-                height: 44,
-                child: TextField(
-                  controller: _phoneCtrl,
-                  focusNode: _phoneFocus,
-                  keyboardType: TextInputType.phone,
-                  style: const TextStyle(fontSize: 14, color: Color(0xFF1E293B), fontWeight: FontWeight.w500),
-                  decoration: InputDecoration(
-                    hintText: 'Phone',
-                    hintStyle: const TextStyle(color: Color(0xFF94A3B8), fontSize: 14),
-                    prefixIcon: const Icon(Icons.phone_outlined, color: Color(0xFF64748B), size: 18),
-                    filled: true,
-                    fillColor: const Color(0xFFF1F5F9),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: BorderSide.none,
+                  const SizedBox(height: 6),
+                  // ── Phone Input ─────────────────────────────────────────
+                  SizedBox(
+                    height: 40,
+                    child: TextField(
+                      controller: _phoneCtrl,
+                      focusNode: _phoneFocus,
+                      keyboardType: TextInputType.phone,
+                      style: const TextStyle(fontSize: 13, color: Color(0xFF1E293B), fontWeight: FontWeight.w500),
+                      decoration: InputDecoration(
+                        hintText: 'Phone',
+                        hintStyle: const TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
+                        filled: true,
+                        fillColor: const Color(0xFFF1F5F9),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: BorderSide.none,
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        suffixIcon: IconButton(
+                          onPressed: () => _openNewCustomerForm(
+                            initialName: _nameCtrl.text,
+                            initialPhone: _phoneCtrl.text,
+                          ),
+                          icon: const Icon(Icons.person_add_alt_1_rounded, color: Color(0xFF2E7D32), size: 18),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          splashRadius: 16,
+                          tooltip: 'Add New Customer',
+                        ),
+                      ),
+                      onChanged: (val) {
+                        widget.provider.setCustomerPhone(val);
+                        final current = widget.provider.customer;
+                        widget.provider.setCustomer(Customer(
+                          id: current.id,
+                          name: current.name,
+                          phone: val,
+                          address: current.address,
+                          area: current.area,
+                          gstin: current.gstin,
+                          creditLimit: current.creditLimit,
+                          balance: current.balance,
+                        ));
+                        _updateSuggestions();
+                      },
                     ),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   ),
-                  onChanged: (val) {
-                    widget.provider.setCustomerPhone(val);
-                    final current = widget.provider.customer;
-                    widget.provider.setCustomer(Customer(
-                      id: current.id,
-                      name: current.name,
-                      phone: val,
-                      address: current.address,
-                      area: current.area,
-                      gstin: current.gstin,
-                      creditLimit: current.creditLimit,
-                      balance: current.balance,
-                    ));
-                    _updateSuggestions();
-                  },
-                ),
+                ],
+              )
+            : Row(
+                children: [
+                  // ── Add New Customer Button (Left Side) ──────────────────────────
+                  IconButton(
+                    onPressed: () => _openNewCustomerForm(
+                      initialName: _nameCtrl.text,
+                      initialPhone: _phoneCtrl.text,
+                    ),
+                    icon: const Icon(Icons.person_add_alt_1_rounded, color: Color(0xFF2E7D32), size: 20),
+                    tooltip: 'Add New Customer',
+                    constraints: const BoxConstraints(),
+                    padding: const EdgeInsets.only(right: 8),
+                  ),
+                  
+                  // ── Customer Name Input ──────────────────────────────────
+                  Expanded(
+                    child: SizedBox(
+                      height: 44,
+                      child: TextField(
+                        controller: _nameCtrl,
+                        focusNode: _nameFocus,
+                        style: const TextStyle(fontSize: 14, color: Color(0xFF1E293B), fontWeight: FontWeight.w500),
+                        decoration: InputDecoration(
+                          hintText: 'Customer Name',
+                          hintStyle: const TextStyle(color: Color(0xFF94A3B8), fontSize: 14),
+                          prefixIcon: const Icon(Icons.person_outline_rounded, color: Color(0xFF64748B), size: 20),
+                          filled: true,
+                          fillColor: const Color(0xFFF1F5F9),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: BorderSide.none,
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        ),
+                        onChanged: (val) {
+                          final current = widget.provider.customer;
+                          widget.provider.setCustomer(Customer(
+                            id: current.id,
+                            name: val,
+                            phone: current.phone,
+                            address: current.address,
+                            area: current.area,
+                            gstin: current.gstin,
+                            creditLimit: current.creditLimit,
+                            balance: current.balance,
+                          ));
+                          _updateSuggestions();
+                        },
+                      ),
+                    ),
+                  ),
+                  
+                  // ── Search Icon Button ──────────────────────────────────
+                  IconButton(
+                    onPressed: () => _openCustomerPicker(
+                      initialQuery: _nameCtrl.text.isNotEmpty ? _nameCtrl.text : _phoneCtrl.text,
+                    ),
+                    icon: const Icon(Icons.search_rounded, color: Color(0xFF64748B), size: 22),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    constraints: const BoxConstraints(),
+                    splashRadius: 20,
+                    tooltip: 'Search Customer',
+                  ),
+                  
+                  // ── Phone Input ─────────────────────────────────────────
+                  Expanded(
+                    child: SizedBox(
+                      height: 44,
+                      child: TextField(
+                        controller: _phoneCtrl,
+                        focusNode: _phoneFocus,
+                        keyboardType: TextInputType.phone,
+                        style: const TextStyle(fontSize: 14, color: Color(0xFF1E293B), fontWeight: FontWeight.w500),
+                        decoration: InputDecoration(
+                          hintText: 'Phone',
+                          hintStyle: const TextStyle(color: Color(0xFF94A3B8), fontSize: 14),
+                          prefixIcon: const Icon(Icons.phone_outlined, color: Color(0xFF64748B), size: 18),
+                          filled: true,
+                          fillColor: const Color(0xFFF1F5F9),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: BorderSide.none,
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        ),
+                        onChanged: (val) {
+                          widget.provider.setCustomerPhone(val);
+                          final current = widget.provider.customer;
+                          widget.provider.setCustomer(Customer(
+                            id: current.id,
+                            name: current.name,
+                            phone: val,
+                            address: current.address,
+                            area: current.area,
+                            gstin: current.gstin,
+                            creditLimit: current.creditLimit,
+                            balance: current.balance,
+                          ));
+                          _updateSuggestions();
+                        },
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ),
-          ],
-        ),
       ),
     );
   }
