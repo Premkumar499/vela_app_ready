@@ -35,21 +35,27 @@ logger = logging.getLogger(__name__)
 SOURCE_APP = "NON_GST_ERP"
 
 
+_SUPABASE_CLIENT = None
+
+
 def _get_supabase():
-    import os
-    from dotenv import load_dotenv
-    from supabase import create_client
-    _env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
-    load_dotenv(_env_path, override=True)
-    url = os.getenv("SUPABASE_URL", "")
-    key = (
-        os.getenv("SUPABASE_SERVICE_KEY")
-        or os.getenv("SUPABASE_SECRET_KEY")
-        or ""
-    )
-    if not url or not key:
-        raise ValueError("SUPABASE_URL or key not set in .env")
-    return create_client(url, key)
+    global _SUPABASE_CLIENT
+    if _SUPABASE_CLIENT is None:
+        import os
+        from dotenv import load_dotenv
+        from supabase import create_client
+        _env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+        load_dotenv(_env_path, override=True)
+        url = os.getenv("SUPABASE_URL", "")
+        key = (
+            os.getenv("SUPABASE_SERVICE_KEY")
+            or os.getenv("SUPABASE_SECRET_KEY")
+            or ""
+        )
+        if not url or not key:
+            raise ValueError("SUPABASE_URL or key not set in .env")
+        _SUPABASE_CLIENT = create_client(url, key)
+    return _SUPABASE_CLIENT
 
 
 class ReservationService:
@@ -293,26 +299,26 @@ class ReservationService:
         grouped by bill, joined with product names and company bill info.
         """
         try:
-            sb = _get_supabase()
-
-            holds = (
-                sb.table("stock_reservations")
+            holds_resp = self._execute_with_retry(
+                lambda sb: sb.table("stock_reservations")
                 .select("id, product_id, bill_id, quantity, reserved_at")
                 .eq("status", "HELD")
                 .eq("source_app", SOURCE_APP)
                 .order("reserved_at")
                 .execute()
-            ).data or []
+            )
+            holds = holds_resp.data or []
             if not holds:
                 return {"success": True, "count": 0, "data": []}
 
             product_ids = sorted({str(h["product_id"]) for h in holds})
-            prod_rows = (
-                sb.table("products")
+            prod_resp = self._execute_with_retry(
+                lambda sb: sb.table("products")
                 .select("product_id, product_name, units(unit_name)")
                 .in_("product_id", product_ids)
                 .execute()
-            ).data or []
+            )
+            prod_rows = prod_resp.data or []
             prod_map = {
                 str(r["product_id"]): {
                     "name": r.get("product_name") or "(deleted product)",
@@ -321,12 +327,13 @@ class ReservationService:
                 for r in prod_rows
             }
 
-            inv_rows = (
-                sb.table("inventory")
+            inv_resp = self._execute_with_retry(
+                lambda sb: sb.table("inventory")
                 .select("product_id, current_stock, reserved_stock")
                 .in_("product_id", product_ids)
                 .execute()
-            ).data or []
+            )
+            inv_rows = inv_resp.data or []
             inv_map = {
                 str(r["product_id"]): {
                     "current":  float(r.get("current_stock") or 0),
@@ -340,13 +347,14 @@ class ReservationService:
             })
             bill_map = {}
             if bill_ids:
-                comp_rows = (
-                    sb.table("erp_billing_system_company")
+                comp_resp = self._execute_with_retry(
+                    lambda sb: sb.table("erp_billing_system_company")
                     .select("invoice_no, customer_name, customer_phone, payment_mode,"
                             " sales_type, through, area, total_amount, invoice_date, invoice_time")
                     .in_("invoice_no", bill_ids)
                     .execute()
-                ).data or []
+                )
+                comp_rows = comp_resp.data or []
                 for r in comp_rows:
                     bill_map[str(r["invoice_no"])] = r
 
@@ -402,10 +410,11 @@ class ReservationService:
         Returns live current_stock and reserved_stock from the database.
         """
         try:
-            sb = _get_supabase()
-            resp = sb.table("inventory").select(
-                "product_id, current_stock, reserved_stock"
-            ).eq("product_id", product_id).execute()
+            resp = self._execute_with_retry(
+                lambda sb: sb.table("inventory").select(
+                    "product_id, current_stock, reserved_stock"
+                ).eq("product_id", product_id).execute()
+            )
 
             if not resp.data:
                 return self._error("PRODUCT_NOT_FOUND", f"Product {product_id} not found in inventory")
@@ -444,9 +453,31 @@ class ReservationService:
     # actually inside exc.args[0]. Handle both the happy path and that
     # exception path so callers always receive the RPC result dict.
     # ------------------------------------------------------------------
+    def _execute_with_retry(self, query_builder_fn, retries=3, delay=1.0):
+        """
+        Executes a Supabase query builder function with retries on network/HTTP/protocol errors.
+        """
+        import time
+        import httpx
+        global _SUPABASE_CLIENT
+        last_exc = None
+        for attempt in range(retries):
+            try:
+                return query_builder_fn(_get_supabase())
+            except httpx.RequestError as exc:
+                last_exc = exc
+                logger.warning(
+                    "[ReservationService] Database query failed (attempt %d/%d): %s. Clearing cached client and retrying...",
+                    attempt + 1, retries, str(exc)
+                )
+                _SUPABASE_CLIENT = None
+                if attempt < retries - 1:
+                    time.sleep(delay)
+        raise last_exc
+
     def _rpc_returning_dict(self, rpc_name: str, params: dict) -> dict:
         try:
-            result = _get_supabase().rpc(rpc_name, params).execute()
+            result = self._execute_with_retry(lambda sb: sb.rpc(rpc_name, params).execute())
             if result.data is None:
                 return {"success": True, "message": "No response from database"}
             return self._unwrap(result.data)

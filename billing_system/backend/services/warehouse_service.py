@@ -10,20 +10,27 @@ import os
 SOURCE_APP = "NON_GST_ERP"
 
 
+_SUPABASE_CLIENT = None
+
+
 def _get_supabase():
-    from dotenv import load_dotenv
-    from supabase import create_client
-    _env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
-    load_dotenv(_env_path, override=True)
-    url = os.getenv("SUPABASE_URL", "")
-    key = (
-        os.getenv("SUPABASE_SERVICE_KEY")
-        or os.getenv("SUPABASE_SECRET_KEY")
-        or ""
-    )
-    if not url or not key:
-        raise ValueError("SUPABASE_URL or key not set in .env")
-    return create_client(url, key)
+    global _SUPABASE_CLIENT
+    if _SUPABASE_CLIENT is None:
+        import os
+        from dotenv import load_dotenv
+        from supabase import create_client
+        _env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+        load_dotenv(_env_path, override=True)
+        url = os.getenv("SUPABASE_URL", "")
+        key = (
+            os.getenv("SUPABASE_SERVICE_KEY")
+            or os.getenv("SUPABASE_SECRET_KEY")
+            or ""
+        )
+        if not url or not key:
+            raise ValueError("SUPABASE_URL or key not set in .env")
+        _SUPABASE_CLIENT = create_client(url, key)
+    return _SUPABASE_CLIENT
 
 
 def _safe_float(value, default: float = 0.0) -> float:

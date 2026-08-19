@@ -557,8 +557,36 @@ class BillingService:
             return {"success": False, "message": "; ".join(errors)}
 
         self._ensure_loaded()
-        bill_number = self._next_bill_number()
         now = datetime.now()
+
+        # Check if there is an existing salesperson bill for the same salesperson and customer today.
+        # If so, delete it first to ensure we only update the bill and delete the old bill.
+        is_salesperson_bill = payload.get("is_salesperson_bill", False)
+        through = payload.get("through")
+        customer_name = payload.get("customer_name")
+        
+        if is_salesperson_bill and through and customer_name:
+            today_str = now.strftime("%Y-%m-%d")
+            try:
+                sb = _get_supabase_client()
+                existing_bills = (
+                    sb.table("erp_billing_system")
+                    .select("bill_no")
+                    .eq("through", through)
+                    .eq("customer_name", customer_name)
+                    .eq("bill_date", today_str)
+                    .execute()
+                ).data
+                if existing_bills:
+                    for old_bill in existing_bills:
+                        old_bill_no = old_bill.get("bill_no")
+                        if old_bill_no:
+                            print(f"[create_bill] Deleting old salesperson bill to update it: {old_bill_no}", flush=True)
+                            self.delete_bill(old_bill_no)
+            except Exception as e:
+                print(f"[create_bill] Error checking/deleting old salesperson bill: {e}", flush=True)
+
+        bill_number = self._next_bill_number()
         items = payload.get("items", [])
 
         # Compute line amounts and the grand total in one pass, rounding each
