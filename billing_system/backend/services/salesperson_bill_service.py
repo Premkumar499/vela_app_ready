@@ -17,12 +17,13 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 
-_SUPABASE_CLIENT = None
+import threading
+
+_THREAD_LOCAL = threading.local()
 
 
 def _get_supabase():
-    global _SUPABASE_CLIENT
-    if _SUPABASE_CLIENT is None:
+    if not hasattr(_THREAD_LOCAL, "client"):
         import os
         from dotenv import load_dotenv
         from supabase import create_client
@@ -36,8 +37,8 @@ def _get_supabase():
         )
         if not url or not key:
             raise ValueError("SUPABASE_URL or key not set in .env")
-        _SUPABASE_CLIENT = create_client(url, key)
-    return _SUPABASE_CLIENT
+        _THREAD_LOCAL.client = create_client(url, key)
+    return _THREAD_LOCAL.client
 
 
 class SalespersonBillService:
