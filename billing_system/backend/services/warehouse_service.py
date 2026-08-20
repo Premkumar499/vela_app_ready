@@ -10,12 +10,17 @@ import os
 SOURCE_APP = "NON_GST_ERP"
 
 
+import threading
+
 _SUPABASE_CLIENT = None
+_THREAD_LOCAL = threading.local()
 
 
 def _get_supabase():
     global _SUPABASE_CLIENT
-    if _SUPABASE_CLIENT is None:
+    if _SUPABASE_CLIENT is not None:
+        return _SUPABASE_CLIENT
+    if not hasattr(_THREAD_LOCAL, "client") or _THREAD_LOCAL.client is None:
         import os
         from dotenv import load_dotenv
         from supabase import create_client
@@ -29,8 +34,8 @@ def _get_supabase():
         )
         if not url or not key:
             raise ValueError("SUPABASE_URL or key not set in .env")
-        _SUPABASE_CLIENT = create_client(url, key)
-    return _SUPABASE_CLIENT
+        _THREAD_LOCAL.client = create_client(url, key)
+    return _THREAD_LOCAL.client
 
 
 def _safe_float(value, default: float = 0.0) -> float:

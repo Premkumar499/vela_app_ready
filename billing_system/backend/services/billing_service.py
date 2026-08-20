@@ -76,18 +76,18 @@ def _get_supabase():
     return create_client(url, key)
 
 
-# Cached module-level client. Creating a fresh client per request is expensive;
-# the service-role key is static, so a single shared client is safe and avoids
-# the N+1 client-creation overhead in get_all_bills / _row_to_bill_dict.
 _SUPABASE_CLIENT = None
+_THREAD_LOCAL = threading.local()
 
 
 def _get_supabase_client():
-    """Return a cached, shared Supabase client (created once per process)."""
+    """Return a thread-local cached Supabase client."""
     global _SUPABASE_CLIENT
-    if _SUPABASE_CLIENT is None:
-        _SUPABASE_CLIENT = _get_supabase()
-    return _SUPABASE_CLIENT
+    if _SUPABASE_CLIENT is not None:
+        return _SUPABASE_CLIENT
+    if not hasattr(_THREAD_LOCAL, "client") or _THREAD_LOCAL.client is None:
+        _THREAD_LOCAL.client = _get_supabase()
+    return _THREAD_LOCAL.client
 
 
 def _safe_float(value, default: float = 0.0) -> float:

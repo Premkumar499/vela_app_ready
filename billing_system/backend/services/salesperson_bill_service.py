@@ -19,11 +19,15 @@ logger = logging.getLogger(__name__)
 
 import threading
 
+_SUPABASE_CLIENT = None
 _THREAD_LOCAL = threading.local()
 
 
 def _get_supabase():
-    if not hasattr(_THREAD_LOCAL, "client"):
+    global _SUPABASE_CLIENT
+    if _SUPABASE_CLIENT is not None:
+        return _SUPABASE_CLIENT
+    if not hasattr(_THREAD_LOCAL, "client") or _THREAD_LOCAL.client is None:
         import os
         from dotenv import load_dotenv
         from supabase import create_client
