@@ -108,7 +108,7 @@ Columns used by code: `product_id` (UUID), `product_name`, `selling_price`, `sku
 | `updated_at` | TIMESTAMPTZ | (0005) |
 
 ### 3.7 `customers` (shared)
-Columns used: `customer_id` (UUID), `name`, `phone`, `email`, `address`. (Note: this differs from the old root `0001_init.sql` design which was never used.)
+Columns used: `customer_id` (UUID), `name`, `phone`, `email`, `address`.
 
 ### 3.8 `bill_drafts` (shared session tracker)
 | Column | Type | Notes |
