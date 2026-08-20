@@ -922,7 +922,7 @@ class BillingService:
 
         bill_items = [
             {
-                "product_id":   None,
+                "product_id":   it.get("product_id") or None,
                 "product_name": it["description"],
                 "unit":         company_units.get(it.get("sno", 0), "Nos"),
                 "quantity":     float(it["quantity"]),

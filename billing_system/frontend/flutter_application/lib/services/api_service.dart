@@ -422,6 +422,28 @@ class ApiService {
     }
   }
 
+  /// Update the payment amount for a completed salesperson bill.
+  static Future<ApiResult<Map<String, dynamic>>> updateCompletedSalespersonBillPayment(
+      String billNo, double amountPaid) async {
+    try {
+      final response = await _client
+          .patch(
+            Uri.parse('${AppConstants.baseUrl}/salesperson-bills/completed/$billNo/payment'),
+            headers: _headers,
+            body: jsonEncode({'amount_paid': amountPaid}),
+          )
+          .timeout(AppConstants.requestTimeout);
+
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        return ApiResult.ok(body);
+      }
+      return ApiResult.err(_extractError(response));
+    } catch (_) {
+      return const ApiResult.err('Cannot reach server to update completed payment.');
+    }
+  }
+
   /// Fetch a single bill by [billNumber].
   static Future<ApiResult<Bill>> getBillDetails(String billNumber) async {
     try {

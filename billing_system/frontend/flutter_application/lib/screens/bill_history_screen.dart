@@ -359,6 +359,78 @@ class _BillHistoryScreenState extends State<BillHistoryScreen>
     );
   }
 
+  bool _isTodaySelected() {
+    if (_startDate == null || _endDate == null) return false;
+    final now = DateTime.now();
+    return DateUtils.isSameDay(_startDate!, now) && DateUtils.isSameDay(_endDate!, now);
+  }
+
+  bool _isMonthSelected() {
+    if (_startDate == null || _endDate == null) return false;
+    final now = DateTime.now();
+    final monthStart = DateTime(now.year, now.month, 1);
+    final monthEnd = DateTime(now.year, now.month + 1, 0, 23, 59, 59);
+    return DateUtils.isSameDay(_startDate!, monthStart) && DateUtils.isSameDay(_endDate!, monthEnd);
+  }
+
+  void _setFilterToday() {
+    final now = DateTime.now();
+    setState(() {
+      _startDate = DateTime(now.year, now.month, now.day, 0, 0, 0);
+      _endDate = DateTime(now.year, now.month, now.day, 23, 59, 59);
+    });
+    _applyFilter();
+  }
+
+  void _setFilterThisMonth() {
+    final now = DateTime.now();
+    setState(() {
+      _startDate = DateTime(now.year, now.month, 1, 0, 0, 0);
+      _endDate = DateTime(now.year, now.month + 1, 0, 23, 59, 59);
+    });
+    _applyFilter();
+  }
+
+  void _clearDateFilter() {
+    setState(() {
+      _startDate = null;
+      _endDate = null;
+    });
+    _applyFilter();
+  }
+
+  Widget _buildQuickFilterChip({
+    required String label,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? AppTheme.primary.withValues(alpha: 0.15)
+              : Colors.grey.shade50,
+          border: Border.all(
+            color: isSelected ? AppTheme.primary : AppTheme.tableBorder,
+            width: isSelected ? 1.5 : 1,
+          ),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+            color: isSelected ? AppTheme.primaryDark : Colors.black87,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildFilterCard() {
     final currency = NumberFormat.currency(symbol: '₹', decimalDigits: 2);
     final total = _filtered.fold<double>(0, (s, b) => s + b.grandTotal);
@@ -381,6 +453,28 @@ class _BillHistoryScreenState extends State<BillHistoryScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Row(
+            children: [
+              _buildQuickFilterChip(
+                label: 'Today',
+                isSelected: _isTodaySelected(),
+                onTap: _setFilterToday,
+              ),
+              const SizedBox(width: 8),
+              _buildQuickFilterChip(
+                label: 'This Month',
+                isSelected: _isMonthSelected(),
+                onTap: _setFilterThisMonth,
+              ),
+              const SizedBox(width: 8),
+              _buildQuickFilterChip(
+                label: 'All Time',
+                isSelected: _startDate == null && _endDate == null,
+                onTap: _clearDateFilter,
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
           Row(
             children: [
               Expanded(

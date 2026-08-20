@@ -202,6 +202,7 @@ Future<void> _pumpScreen(
   // Let remaining microtasks / post-frame callbacks flush.
   await tester.pump(const Duration(milliseconds: 100));
 
-  expect(tester.takeException(), isNull,
-      reason: 'Layout error on ${size.width.toInt()}x${size.height.toInt()}');
+  // Let the test framework handle exceptions to get the full stack trace and diagnostics.
+  // final exception = tester.takeException();
+  // expect(exception, isNull);
 }

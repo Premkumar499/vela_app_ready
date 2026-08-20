@@ -54,3 +54,25 @@ def update_payment(bill_id: str):
     status_code = 200 if result.get("success") else 422
     return jsonify(result), status_code
 
+
+@salesperson_bills_bp.patch("/completed/<string:bill_no>/payment")
+def update_completed_payment(bill_no: str):
+    """
+    Update the payment amount for a completed salesperson bill.
+    This reconstructs the bill, deletes the old one, and creates a new one with the updated payment.
+    """
+    from flask import request
+    data = request.json or {}
+    amount_paid = data.get("amount_paid")
+    if amount_paid is None:
+        return jsonify({"success": False, "message": "amount_paid is required"}), 400
+    try:
+        amount_paid = float(amount_paid)
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "message": "amount_paid must be a valid number"}), 400
+
+    result = salesperson_bill_service.update_completed_payment(bill_no, amount_paid)
+    status_code = 200 if result.get("success") else 422
+    return jsonify(result), status_code
+
+

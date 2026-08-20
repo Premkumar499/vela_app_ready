@@ -11,3 +11,4 @@ graphify-out/
 billing_system/backend/backups/
 billing_system/backend/invoices/
 *.pid
+test_output.txt

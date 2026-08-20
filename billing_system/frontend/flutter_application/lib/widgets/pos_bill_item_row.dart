@@ -33,14 +33,14 @@ class PosBillItemRow extends StatelessWidget {
         ),
       ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: PosTheme.padMd,
+        padding: EdgeInsets.symmetric(
+          horizontal: MediaQuery.of(context).size.width < 600 ? 8.0 : PosTheme.padMd,
           vertical: 10,
         ),
         child: LayoutBuilder(
           builder: (context, constraints) {
             final narrow = constraints.maxWidth < 500;
-            if (narrow) return _buildNarrow(context);
+            if (narrow) return _buildNarrow(context, constraints.maxWidth);
             return _buildWide(context);
           },
         ),
@@ -66,7 +66,7 @@ class PosBillItemRow extends StatelessWidget {
   }
 
   // ── Narrow (phone): name+delete on top, stepper+amounts below ──────────
-  Widget _buildNarrow(BuildContext context) {
+  Widget _buildNarrow(BuildContext context, double maxWidth) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -112,12 +112,22 @@ class PosBillItemRow extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            _QtyStepper(item: item, onIncrease: onIncrease, onDecrease: onDecrease),
-            Text(
-              '₹${item.total.toStringAsFixed(2)}',
-              style: PosTheme.bodyBold.copyWith(
-                color: PosTheme.primary,
-                fontSize: 14,
+            _QtyStepper(
+              item: item,
+              onIncrease: onIncrease,
+              onDecrease: onDecrease,
+              compact: maxWidth < 220,
+            ),
+            Flexible(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  '₹${item.total.toStringAsFixed(2)}',
+                  style: PosTheme.bodyBold.copyWith(
+                    color: PosTheme.primary,
+                    fontSize: 14,
+                  ),
+                ),
               ),
             ),
           ],
@@ -201,17 +211,19 @@ class _QtyStepper extends StatelessWidget {
   final BillItem item;
   final VoidCallback onIncrease;
   final VoidCallback onDecrease;
+  final bool compact;
 
   const _QtyStepper({
     required this.item,
     required this.onIncrease,
     required this.onDecrease,
+    this.compact = false,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 36,
+      height: compact ? 28 : 36,
       decoration: BoxDecoration(
         color: PosTheme.surface,
         border: Border.all(color: PosTheme.border),
@@ -226,10 +238,11 @@ class _QtyStepper extends StatelessWidget {
             color: item.quantity <= 1 ? PosTheme.danger : PosTheme.textSecondary,
             onTap: onDecrease,
             roundLeft: true,
+            compact: compact,
           ),
           // Quantity display
           Container(
-            constraints: const BoxConstraints(minWidth: 30),
+            constraints: BoxConstraints(minWidth: compact ? 22 : 30),
             alignment: Alignment.center,
             padding: const EdgeInsets.symmetric(horizontal: 4),
             decoration: const BoxDecoration(
@@ -244,7 +257,7 @@ class _QtyStepper extends StatelessWidget {
               child: Text(
                 _formatQty(item.quantity),
                 key: ValueKey(item.quantity),
-                style: PosTheme.bodyBold.copyWith(fontSize: 14),
+                style: PosTheme.bodyBold.copyWith(fontSize: compact ? 12 : 14),
                 textAlign: TextAlign.center,
               ),
             ),
@@ -257,6 +270,7 @@ class _QtyStepper extends StatelessWidget {
                 : PosTheme.primary,
             onTap: onIncrease,
             roundRight: true,
+            compact: compact,
           ),
         ],
       ),
@@ -273,6 +287,7 @@ class _StepBtn extends StatelessWidget {
   final VoidCallback onTap;
   final bool roundLeft;
   final bool roundRight;
+  final bool compact;
 
   const _StepBtn({
     required this.icon,
@@ -280,6 +295,7 @@ class _StepBtn extends StatelessWidget {
     required this.onTap,
     this.roundLeft = false,
     this.roundRight = false,
+    this.compact = false,
   });
 
   @override
@@ -291,9 +307,9 @@ class _StepBtn extends StatelessWidget {
         right: roundRight ? const Radius.circular(PosTheme.radiusMd) : Radius.zero,
       ),
       child: SizedBox(
-        width: 30,
-        height: 36,
-        child: Icon(icon, size: 16, color: color),
+        width: compact ? 24 : 30,
+        height: compact ? 28 : 36,
+        child: Icon(icon, size: compact ? 12 : 16, color: color),
       ),
     );
   }

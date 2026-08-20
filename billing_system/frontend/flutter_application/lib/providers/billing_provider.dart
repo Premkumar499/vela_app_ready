@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../models/customer.dart';
@@ -48,6 +49,9 @@ class BillingProvider with ChangeNotifier {
 
   /// Maps productId → reservationId for active reservations in this draft.
   final Map<String, String> _reservationIds = {};
+
+  /// Maps productId → Future<void> to lock operations sequentially per product
+  final Map<String, Future<void>> _productLocks = {};
 
   // ── Getters ───────────────────────────────────────────────────────────────
   Customer         get customer      => _customer;
@@ -110,7 +114,38 @@ class BillingProvider with ChangeNotifier {
   /// update_hold RPC so there is no race-condition window where the
   /// freed stock could be grabbed by the GST ERP between release and re-reserve.
   /// Holds do NOT deduct current_stock — they only earmark reserved_stock.
+  /// Attempts to reserve [quantity] units of [product] in the database.
+  ///
+  /// Returns a [ReservationResult] indicating success or the reason for failure.
+  /// The product is only added to the bill if the database reservation succeeds.
+  ///
+  /// For an existing item in the bill (quantity increase), uses the atomic
+  /// update_hold RPC so there is no race-condition window where the
+  /// freed stock could be grabbed by the GST ERP between release and re-reserve.
+  /// Holds do NOT deduct current_stock — they only earmark reserved_stock.
   Future<ReservationResult> addProductWithReservation(
+    Product product, {
+    double quantity = 1,
+  }) async {
+    final completer = Completer<void>();
+    final previousLock = _productLocks[product.id];
+    _productLocks[product.id] = completer.future;
+
+    if (previousLock != null) {
+      await previousLock;
+    }
+
+    try {
+      return await _addProductWithReservationInternal(product, quantity: quantity);
+    } finally {
+      completer.complete();
+      if (_productLocks[product.id] == completer.future) {
+        _productLocks.remove(product.id);
+      }
+    }
+  }
+
+  Future<ReservationResult> _addProductWithReservationInternal(
     Product product, {
     double quantity = 1,
   }) async {
@@ -225,11 +260,34 @@ class BillingProvider with ChangeNotifier {
   Future<void> removeItemWithRelease(int index) async {
     if (index < 0 || index >= _items.length) return;
     final item = _items[index];
-    _items.removeAt(index);
+    final productId = item.productId;
+
+    final completer = Completer<void>();
+    final previousLock = _productLocks[productId];
+    _productLocks[productId] = completer.future;
+
+    if (previousLock != null) {
+      await previousLock;
+    }
+
+    try {
+      await _removeItemWithReleaseInternal(productId);
+    } finally {
+      completer.complete();
+      if (_productLocks[productId] == completer.future) {
+        _productLocks.remove(productId);
+      }
+    }
+  }
+
+  Future<void> _removeItemWithReleaseInternal(String productId) async {
+    final idx = _items.indexWhere((i) => i.productId == productId);
+    if (idx == -1) return;
+    _items.removeAt(idx);
     notifyListeners();
 
     // Release reservation in background
-    final reservationId = _reservationIds.remove(item.productId);
+    final reservationId = _reservationIds.remove(productId);
     if (reservationId != null) {
       try {
         await _releaseSingleReservation(reservationId);
@@ -245,11 +303,35 @@ class BillingProvider with ChangeNotifier {
     double newQuantity,
     Product product,
   ) async {
-    if (index < 0 || index >= _items.length) {
+    final completer = Completer<void>();
+    final previousLock = _productLocks[product.id];
+    _productLocks[product.id] = completer.future;
+
+    if (previousLock != null) {
+      await previousLock;
+    }
+
+    try {
+      return await _updateQuantityWithReservationInternal(product.id, newQuantity, product);
+    } finally {
+      completer.complete();
+      if (_productLocks[product.id] == completer.future) {
+        _productLocks.remove(product.id);
+      }
+    }
+  }
+
+  Future<ReservationResult> _updateQuantityWithReservationInternal(
+    String productId,
+    double newQuantity,
+    Product product,
+  ) async {
+    final index = _items.indexWhere((i) => i.productId == productId);
+    if (index == -1) {
       return const ReservationResult(success: false, message: 'Invalid index');
     }
     if (newQuantity <= 0) {
-      await removeItemWithRelease(index);
+      await _removeItemWithReleaseInternal(productId);
       return const ReservationResult(success: true, message: 'Item removed');
     }
 

@@ -358,7 +358,7 @@ class _PosBillingScreenState extends State<PosBillingScreen> {
           isSaving:   _isSaving,
           onSave:     _saveBill,
           onCancel:   _cancelBill,
-          scrollable: !isWide,
+          scrollable: !isWide || constraints.maxHeight < 700,
           isMobileCheckout: false,
           onError: (msg) {
             _showErrorMessage(msg.isEmpty ? null : msg);

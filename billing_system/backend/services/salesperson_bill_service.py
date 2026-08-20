@@ -69,22 +69,6 @@ class SalespersonBillService:
 
         try:
             sb = _get_supabase()
-            resp = (
-                sb.table("salesperson_bills")
-                .select("*")
-                .eq("id", bill_id)
-                .maybe_single()
-                .execute()
-            )
-            row = resp.data
-            if not row:
-                return {"success": False, "message": f"No inbox row with id {bill_id}"}
-            if row.get("status") not in ("PENDING", "ERROR"):
-                return {
-                    "success": False,
-                    "message": f"Inbox row is already {row.get('status')}",
-                }
-
             # Atomically claim the row so a second worker (auto-polling +
             # manual push racing on the same id) cannot double-bill it.
             # We change the status to 'PROCESSED' during the claim to prevent other
@@ -97,11 +81,14 @@ class SalespersonBillService:
                 .execute()
             )
             if not claimed.data:
+                resp = sb.table("salesperson_bills").select("status").eq("id", bill_id).maybe_single().execute()
+                status = resp.data.get("status") if (resp and resp.data) else "DELETED"
                 return {
                     "success": False,
-                    "message": f"Inbox row {bill_id} was already claimed by another worker",
+                    "message": f"Inbox row {bill_id} is already {status}",
                 }
 
+            row = claimed.data[0]
             items_raw = row.get("items") or []
 
             # Inbox rows created by the salesman app store items as a JSON
@@ -215,10 +202,14 @@ class SalespersonBillService:
                 }).eq("id", bill_id).execute()
                 return result
 
-            # Bill created → data is permanent in erp_billing_system /
-            # erp_billing_system_company. Remove the inbox row.
-            sb.table("salesperson_bills").delete().eq("id", bill_id).execute()
-            result["deleted_inbox_row"] = True
+            # Mark the inbox row as PROCESSED instead of deleting it,
+            # so the salesperson app can later update its payment.
+            sb.table("salesperson_bills").update({
+                "status": "PROCESSED",
+                "processed_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }).eq("id", bill_id).execute()
+            result["deleted_inbox_row"] = False
             result["bill_number"] = result.get("bill_number")
             return result
         except Exception as exc:
@@ -249,6 +240,48 @@ class SalespersonBillService:
             if not resp.data:
                 return {"success": False, "message": f"No salesperson bill with ID {bill_id}"}
             
+            row = resp.data[0]
+            if row.get("status") == "PROCESSED":
+                # The salesperson updated the payment of an already processed bill.
+                # Automatically update the completed bill and delete the old one!
+                created_at_str = row.get("created_at")
+                try:
+                    from datetime import timezone as dt_timezone, timedelta
+                    dt_utc = datetime.fromisoformat(created_at_str)
+                    ist_tz = dt_timezone(timedelta(hours=5, minutes=30))
+                    dt_ist = dt_utc.astimezone(ist_tz)
+                    bill_date = dt_ist.strftime("%Y-%m-%d")
+                except Exception:
+                    bill_date = created_at_str.split("T")[0]
+                
+                through = row.get("submitted_by")
+                customer_name = row.get("customer_name")
+                
+                from services.billing_service import billing_service
+                completed_resp = (
+                    sb.table("erp_billing_system")
+                    .select("bill_no")
+                    .eq("through", through)
+                    .eq("customer_name", customer_name)
+                    .eq("bill_date", bill_date)
+                    .execute()
+                )
+                if completed_resp.data:
+                    old_bill_no = completed_resp.data[0]["bill_no"]
+                    print(f"[update_payment] Automatically updating completed bill: {old_bill_no}", flush=True)
+                    # Trigger the update_completed_payment flow!
+                    update_res = self.update_completed_payment(old_bill_no, amount_paid)
+                    if not update_res.get("success"):
+                        return {"success": False, "message": f"Failed to update completed bill: {update_res.get('message')}"}
+                    return {
+                        "success": True,
+                        "message": "Payment updated successfully, and completed bill updated.",
+                        "data": resp.data[0],
+                        "completed_bill": update_res
+                    }
+                else:
+                    print(f"[update_payment] No matching completed bill found in erp_billing_system for through={through}, customer={customer_name}, date={bill_date}", flush=True)
+
             return {
                 "success": True, 
                 "message": "Payment updated successfully", 
@@ -257,6 +290,63 @@ class SalespersonBillService:
         except Exception as exc:
             logger.exception("[SalespersonBillService] update_payment failed")
             return {"success": False, "message": f"Failed to update payment: {exc}"}
+
+    def update_completed_payment(self, bill_no: str, amount_paid: float) -> dict:
+        """
+        Update the payment of a completed salesperson bill.
+        Since we need to update the PDF and database records cleanly,
+        we delete the old bill and create a new bill with the updated payment details.
+        """
+        from services.billing_service import billing_service
+        try:
+            # 1. Fetch old bill details
+            old_bill = billing_service.get_bill_by_number(bill_no)
+            if not old_bill:
+                return {"success": False, "message": f"Completed bill {bill_no} not found"}
+            
+            # Make sure it's a salesperson bill (has a non-empty 'through')
+            if not old_bill.get("through"):
+                return {"success": False, "message": f"Bill {bill_no} is not a salesperson bill"}
+
+            # 2. Reconstruct the payload for create_bill
+            items = []
+            for it in old_bill.get("items", []):
+                items.append({
+                    "product_id": it.get("product_id"),
+                    "product_name": it.get("product_name"),
+                    "unit": it.get("unit", "Nos"),
+                    "quantity": float(it.get("quantity", 0.0)),
+                    "rate": float(it.get("rate", 0.0)),
+                })
+
+            payload = {
+                "customer_id": old_bill.get("customer_id") or 0,
+                "customer_name": old_bill.get("customer_name") or "Walk-in Customer",
+                "customer_phone": old_bill.get("customer_phone") or "",
+                "payment_type": old_bill.get("payment_type") or "Cash",
+                "sales_type": old_bill.get("sales_type") or "Retail",
+                "through": old_bill.get("through") or "",
+                "area": old_bill.get("area") or "",
+                "remarks": old_bill.get("remarks") or "",
+                "price_list": old_bill.get("price_list") or "Retail",
+                "draft_bill_id": old_bill.get("draft_bill_id") or "",
+                "items": items,
+                "is_salesperson_bill": True,
+                "amount_paid": amount_paid,
+            }
+
+            # 3. Delete the old completed bill (which deletes DB rows and PDFs)
+            del_result = billing_service.delete_bill(bill_no)
+            if not del_result.get("success"):
+                return {"success": False, "message": f"Failed to delete old bill during update: {del_result.get('message')}"}
+
+            # 4. Create the new bill (which generates new DB rows and new PDFs)
+            create_result = billing_service.create_bill(payload)
+            return create_result
+
+        except Exception as exc:
+            logger.exception("[SalespersonBillService] update_completed_payment failed")
+            return {"success": False, "message": f"Failed to update completed payment: {exc}"}
 
     # ------------------------------------------------------------------
     # Helpers

@@ -152,6 +152,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
     );
   }
 
+
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -546,7 +548,7 @@ class _AutomatedOrderTile extends StatelessWidget {
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
-                    'AUTOMATED',
+                     'AUTOMATED',
                     style: AppTheme.bodySmall.copyWith(
                       color: AppTheme.success,
                       fontWeight: FontWeight.w700,
